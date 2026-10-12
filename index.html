@@ -342,17 +342,19 @@ footer h2 { margin-bottom: 8px; }
       </article>
 
       <article class="card" data-c="coursework">
-        <div class="card-top"><span class="kind">CentraleSupélec · Robotics project</span><span class="vis">2025–26</span></div>
-        <h3>Empathetic voice robot</h3>
-        <p>A voice-driven companion robot with animated eyes showing six emotions. Speech is transcribed with Whisper; DeBERTa detects intent and emotion, BERT extracts named entities, BlenderBot generates candidate replies that a cross-encoder reranks, and the answer is translated to French and spoken aloud. Built on an open-source empathetic chatbot and adapted to run as a standalone robot targeting a Raspberry Pi 4.</p>
-        <div class="tags"><span>Whisper</span><span>Transformers</span><span>BlenderBot</span><span>Pygame</span><span>Raspberry Pi</span></div>
+        <div class="card-top"><span class="kind">CentraleSupélec · Robotics project</span><span class="vis">2025–26 · team of 5</span></div>
+        <h3>Empathetic companion robot</h3>
+        <p>A companion robot for children facing social isolation: an omnidirectional wheeled base driven by an Arduino, a laser-cut and 3D-printed body, and a head with a touchscreen, microphone and speakers on a Raspberry Pi, showing an animated face that talks and reacts to emotions. My part, with one teammate, was the chatbot, built from an open-source empathetic chatbot: Whisper speech recognition, DeBERTa intent and emotion detection, BERT named entities, BlenderBot candidate replies reranked by a cross-encoder, then translation to French and speech. The models run on a PC that talks to the robot over WebSocket, as the Raspberry Pi 3 was too weak to host them.</p>
+        <div class="tags"><span>Whisper</span><span>Transformers</span><span>BlenderBot</span><span>Raspberry Pi</span><span>Arduino</span></div>
+        <a class="link" href="files/empathetic-robot-report-en.pdf" target="_blank" rel="noopener">Report (PDF, English)</a>
       </article>
 
       <article class="card" data-c="coursework">
         <div class="card-top"><span class="kind">LaFabrique · CentraleSupélec FabLab</span><span class="vis">Sep–Dec 2025</span></div>
         <h3>Automated integrated-circuit sorting system</h3>
-        <p>Designed and built a machine that sorts integrated circuits from a randomly ordered tray: an XYZ robotic arm picks each chip and places it under a camera, a vision pipeline on a Raspberry Pi identifies it (OpenCV preprocessing, then OCR of the part marking), and the arm drops it in the matching compartment, with the mechanical motion synchronised with the image analysis.</p>
-        <div class="tags"><span>Raspberry Pi</span><span>OpenCV</span><span>Tesseract OCR</span><span>Robotics</span></div>
+        <p>Designed and built a machine that sorts integrated circuits from a tray of unsorted parts. An XYZ gantry built on a reused Prusa MK3S printer frame (stepper motors on TMC2209 drivers, servo-driven Z axis, vacuum pen) picks each chip and places it under a Raspberry Pi 5 camera; an OpenCV + Tesseract OCR pipeline reads the part marking, and the Raspberry Pi sends the moves to an Arduino over serial to drop the chip in its compartment.</p>
+        <div class="tags"><span>Raspberry Pi</span><span>Arduino</span><span>OpenCV</span><span>Tesseract OCR</span><span>Robotics</span></div>
+        <a class="link" href="files/ic-sorting-system-report-en.pdf" target="_blank" rel="noopener">Report (PDF, English)</a>
       </article>
 
       <article class="card" data-c="coursework">
