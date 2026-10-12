@@ -313,8 +313,8 @@ footer h2 { margin-bottom: 8px; }
       <article class="card" data-c="hackathon health">
         <div class="card-top"><span class="kind">Raidium × ENS Challenge Data</span><span class="vis">Public · MIT</span></div>
         <h3>Organ segmentation on CT scans</h3>
-        <p>Exploratory work on organ segmentation in CT scans with very few annotated images. Tried a U-Net guided by anatomical priors, a fine-tuned MedSAM, few-shot SAM, a Siamese U-Net and an EfficientNet-SegFormer, and compared five pretrained backbones (ResNet50, DenseNet201, EfficientNet…).</p>
-        <div class="tags"><span>PyTorch</span><span>U-Net</span><span>MedSAM</span><span>Segmentation</span></div>
+        <p>Segmentation of anatomical structures in CT scans with only partial annotations. Built a Prior-Enhanced U-Net, which receives each CT slice together with three prior maps (intensity, edges, texture) and is trained with Dice + Focal loss, and compared it with other approaches: MedSAM with a segmentation head trained on its frozen encoder, few-shot SAM, a Siamese U-Net and an EfficientNet-SegFormer. Also benchmarked five ImageNet-pretrained CNN encoders (ResNet50, DenseNet201, EfficientNet-B0, MobileNetV3, VGG16) under the same segmentation head.</p>
+        <div class="tags"><span>PyTorch</span><span>U-Net</span><span>MedSAM</span><span>Dice + Focal loss</span><span>Segmentation</span></div>
         <a class="link" href="https://github.com/khalilb1929/Raidium-x-ENS-Paris-Saclay-Hackathon" target="_blank" rel="noopener">View code ↗</a>
       </article>
 
