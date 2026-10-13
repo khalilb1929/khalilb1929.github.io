@@ -280,12 +280,11 @@ footer h2 { margin-bottom: 8px; }
       </article>
 
       <article class="card" data-c="research">
-        <div class="card-top"><span class="kind">Personal research</span><span class="vis">Oct 2026 · Public</span></div>
+        <div class="card-top"><span class="kind">Personal research</span><span class="vis">Oct 2026 · Private code — on request</span></div>
         <h3>Machine unlearning: forget-set composition, BatchNorm and NegGrad+ stability</h3>
         <p>Exploratory study of approximate unlearning in a small BatchNorm CNN on Fashion-MNIST. It compares a random forget set with forget sets concentrated in a single class (same size, 600 images), using fine-tuning and NegGrad+ against a retrained reference over 5 seeds on Colab A100. The analysis plan was fixed before the main run, and post hoc diagnostics then examined why NegGrad+ became unstable.</p>
         <div class="highlight">NegGrad+ collapsed to chance accuracy in 26 of 55 runs, all with class-concentrated forget sets. Passing retained and forgotten images through the network together, or freezing BatchNorm during unlearning, avoided the blow-up in all 30 concentrated cases tested, where the original implementation diverged in 29. These findings concern optimization stability only: no erasure or privacy claim.</div>
         <div class="tags"><span>PyTorch</span><span>Machine unlearning</span><span>BatchNorm</span><span>Reproducibility</span><span>LaTeX</span></div>
-        <a class="link" href="https://github.com/khalilb1929/machine-Unlearning" target="_blank" rel="noopener">View code ↗</a>
         <a class="link" href="files/machine-unlearning-short-report-en.pdf" target="_blank" rel="noopener">Report (PDF, English)</a>
         <a class="link" href="files/machine-unlearning-rapport-court-fr.pdf" target="_blank" rel="noopener">Rapport (PDF, français)</a>
       </article>
