@@ -279,16 +279,6 @@ footer h2 { margin-bottom: 8px; }
         <a class="link" href="https://github.com/khalilb1929/Database-Sentinel-" target="_blank" rel="noopener">View code ↗</a>
       </article>
 
-      <article class="card" data-c="research">
-        <div class="card-top"><span class="kind">Personal research</span><span class="vis">Oct 2026 · Public · Draft report</span></div>
-        <h3>Machine unlearning: forget-set composition, BatchNorm and NegGrad+ stability</h3>
-        <p>Exploratory study of approximate unlearning in a small BatchNorm CNN on Fashion-MNIST. It compares a stratified forget set with class-concentrated forget sets of the same size (600 examples), using fine-tuning and NegGrad+ against a retrained reference over 5 seeds on Colab A100. The analysis plan was fixed before the main run. Post hoc diagnostics then examined why NegGrad+ became unstable, and a replication protocol (GroupNorm, CIFAR-10) is planned but not run.</p>
-        <div class="highlight">NegGrad+ collapsed to chance accuracy in 26 of 55 runs, all with class-concentrated forget sets. A concatenated retain+forget forward pass, or eval-mode BatchNorm during unlearning, avoided divergence in all 30 concentrated tasks tested, where the original implementation diverged in 29. These findings concern optimization stability only: no erasure or privacy claim.</div>
-        <div class="tags"><span>PyTorch</span><span>Machine unlearning</span><span>BatchNorm</span><span>Reproducibility</span><span>LaTeX</span></div>
-        <a class="link" href="https://github.com/khalilb1929/machine-Unlearning" target="_blank" rel="noopener">View code ↗</a>
-        <a class="link" href="files/machine-unlearning-neggrad-batchnorm-draft.pdf" target="_blank" rel="noopener">Draft report (PDF)</a>
-      </article>
-
       <article class="card" data-c="research coursework">
         <div class="card-top"><span class="kind">Politecnico di Torino · Course project</span><span class="vis">Mar–May 2026 · team of 4</span></div>
         <h3>Road scene segmentation and anomaly detection</h3>
