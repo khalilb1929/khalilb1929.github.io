@@ -281,12 +281,13 @@ footer h2 { margin-bottom: 8px; }
 
       <article class="card" data-c="research">
         <div class="card-top"><span class="kind">Personal research</span><span class="vis">Oct 2026 · Private code — on request</span></div>
-        <h3>Machine unlearning: forget-set composition, BatchNorm and NegGrad+ stability</h3>
-        <p>Exploratory study of approximate unlearning in a small BatchNorm CNN on Fashion-MNIST. It compares a random forget set with forget sets concentrated in a single class (same size, 600 images), using fine-tuning and NegGrad+ against a retrained reference over 5 seeds on Colab A100. The analysis plan was fixed before the main run, and post hoc diagnostics then examined why NegGrad+ became unstable.</p>
-        <div class="highlight">NegGrad+ collapsed to chance accuracy in 26 of 55 runs, all with class-concentrated forget sets. Passing retained and forgotten images through the network together, or freezing BatchNorm during unlearning, avoided the blow-up in all 30 concentrated cases tested, where the original implementation diverged in 29. These findings concern optimization stability only: no erasure or privacy claim.</div>
-        <div class="tags"><span>PyTorch</span><span>Machine unlearning</span><span>BatchNorm</span><span>Reproducibility</span><span>LaTeX</span></div>
-        <a class="link" href="files/machine-unlearning-short-report-en.pdf" target="_blank" rel="noopener">Report (PDF, English)</a>
-        <a class="link" href="files/machine-unlearning-rapport-court-fr.pdf" target="_blank" rel="noopener">Rapport (PDF, français)</a>
+        <h3>Machine unlearning: forget-set concentration and NegGrad+ reliability in BatchNorm networks</h3>
+        <p>Personal research on approximate unlearning, mostly with a BatchNorm CNN on Fashion-MNIST, run on Colab A100. The question: at a fixed forget-set size (600 images), does concentrating the forgotten examples in one class, rather than spreading them across classes, change how NegGrad+ behaves? It grew from an unexpected failure into a series of pre-specified studies, each with its protocol, power simulation, calibration and analysis committed before the run.</p>
+        <div class="highlight">Concentrated forget sets made NegGrad+ unstable where stratified sets of the same size never did, and its early forget loss depended on concentration beyond what class composition predicts (−0.246 decade per bit of label entropy, 10 seeds, 68 compositions). A bundled BatchNorm intervention cut the retained-utility penalty by 13.7 points, and per-condition tuning brought it down to about 1 point, but mostly by acting more weakly: for 7 of 10 classes no stable setting reached the retrained model's forgetting strength. These are optimization findings only: no erasure or privacy claim.</div>
+        <div class="tags"><span>PyTorch</span><span>Machine unlearning</span><span>BatchNorm</span><span>Pre-registration</span><span>Statistics</span><span>LaTeX</span></div>
+        <a class="link" href="files/machine-unlearning-paper.pdf" target="_blank" rel="noopener">Working paper (PDF)</a>
+        <a class="link" href="files/machine-unlearning-short-report-en.pdf" target="_blank" rel="noopener">Initial report (PDF, English)</a>
+        <a class="link" href="files/machine-unlearning-rapport-court-fr.pdf" target="_blank" rel="noopener">Rapport initial (PDF, français)</a>
       </article>
 
       <article class="card" data-c="research coursework">
