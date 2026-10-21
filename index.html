@@ -257,7 +257,7 @@ footer h2 { margin-bottom: 8px; }
       <button data-f="coursework" aria-pressed="false">Coursework</button>
       <button data-f="health" aria-pressed="false">Healthcare</button>
       <button data-f="hackathon" aria-pressed="false">Hackathons</button>
-      <button data-f="finance" aria-pressed="false">Finance</button>
+      <button data-f="software" aria-pressed="false">Software &amp; systems</button>
     </div>
 
     <div class="grid" id="grid">
@@ -271,7 +271,7 @@ footer h2 { margin-bottom: 8px; }
         <a class="link" href="research/vit2snn.html">Interactive explainer</a>
       </article>
 
-      <article class="card" data-c="research">
+      <article class="card" data-c="research software">
         <div class="card-top"><span class="kind">Research · with Prof. Diego Valsesia (PoliTo)</span><span class="vis">Sep 2026–now · Public · MIT</span></div>
         <h3>Database-Sentinel: a multispectral dataset for satellite image compression</h3>
         <p>Independent research project with Prof. Diego Valsesia (Politecnico di Torino), building a large-scale multispectral Sentinel-2 dataset to train autoencoder models for onboard image compression. The pipeline builds a Sentinel-2 L1C time series for any point on Earth. It queries the Copernicus STAC API, filters images (clouds, coverage, quality of all 13 bands) and resamples them onto a 10 m UTM grid, logging a reason for every rejected image.</p>
@@ -299,7 +299,7 @@ footer h2 { margin-bottom: 8px; }
         <a class="link" href="files/road-scene-anomaly-segmentation-report.pdf" target="_blank" rel="noopener">Report (PDF)</a>
       </article>
 
-      <article class="card" data-c="coursework">
+      <article class="card" data-c="coursework software">
         <div class="card-top"><span class="kind">Politecnico di Torino · Course project</span><span class="vis">Spring 2026 · team of 4</span></div>
         <h3>3D bin-packing solver with parallel metaheuristics</h3>
         <p>Python solver that packs items into vehicles of several types and costs, with 3D rotations and weight limits. A multi-start greedy ensemble seeds a biased random-key genetic algorithm (BRKGA), adaptive large neighbourhood search and tabu search. An extended version runs four worker processes in parallel that share results through a queue, then tries to merge pairs of bins exactly with OR-Tools CP-SAT.</p>
@@ -307,7 +307,7 @@ footer h2 { margin-bottom: 8px; }
         <div class="tags"><span>Python</span><span>Metaheuristics</span><span>Multiprocessing</span><span>OR-Tools CP-SAT</span></div>
       </article>
 
-      <article class="card" data-c="coursework">
+      <article class="card" data-c="coursework software">
         <div class="card-top"><span class="kind">Politecnico di Torino · Mobile &amp; Sensor Networks</span><span class="vis">Spring 2026 · labs</span></div>
         <h3>Linux network labs: Wi-Fi, Bluetooth, TCP/UDP and Kubernetes</h3>
         <p>Hands-on labs on Linux. Scanned Wi-Fi and Bluetooth surroundings from the command line (ip, iw, traceroute, bluez) and wrote Python scripts to parse the logs and track signal quality per access point and channel. Captured 802.11 traffic in monitor mode with Wireshark and tshark and exported trace fields for analysis. Ran TCP and UDP exchanges between two hosts and deployed services on a Kubernetes cluster of remote CrownLabs virtual machines over SSH.</p>
@@ -329,7 +329,7 @@ footer h2 { margin-bottom: 8px; }
         <div class="tags"><span>PyTorch</span><span>Transformer</span><span>Tabular data</span><span>Healthcare</span></div>
       </article>
 
-      <article class="card" data-c="hackathon health finance">
+      <article class="card" data-c="hackathon health">
         <div class="card-top"><span class="kind">QRT × Gustave Roussy challenge</span><span class="vis">Private code — on request</span></div>
         <h3>Leukemia risk prediction</h3>
         <p>Predicting overall survival of myeloid leukemia patients from clinical and molecular data (3,300 patients). Comparison of survival models: Random Survival Forest, XGBoost, CatBoost and a neural network.</p>
@@ -352,7 +352,7 @@ footer h2 { margin-bottom: 8px; }
         <div class="tags"><span>pandas</span><span>scikit-learn</span><span>XGBoost</span><span>SARIMA</span></div>
       </article>
 
-      <article class="card" data-c="finance hackathon">
+      <article class="card" data-c="hackathon">
         <div class="card-top"><span class="kind">Kaggle</span><span class="vis">Public</span></div>
         <h3>MITSUI &amp; CO.: commodity price prediction</h3>
         <p>Entry to the Kaggle commodity time-series prediction challenge: rolling-window, momentum and volatility features, and a Kaggle-format submission pipeline.</p>
@@ -360,7 +360,7 @@ footer h2 { margin-bottom: 8px; }
         <a class="link" href="https://github.com/khalilb1929/MITSUI-CO_Kaggle" target="_blank" rel="noopener">View code ↗</a>
       </article>
 
-      <article class="card" data-c="finance">
+      <article class="card" data-c="software">
         <div class="card-top"><span class="kind">Finance</span><span class="vis">Public</span></div>
         <h3>Volatility Trading Dashboard</h3>
         <p>Desktop dashboard on Yahoo Finance data: price charts with technical indicators (RSI, MACD, Bollinger Bands) and a machine-learning model that forecasts short-term volatility from past market data.</p>
@@ -368,7 +368,7 @@ footer h2 { margin-bottom: 8px; }
         <a class="link" href="https://github.com/khalilb1929/Volatility-Trading-Dashboard-" target="_blank" rel="noopener">View code ↗</a>
       </article>
 
-      <article class="card" data-c="coursework">
+      <article class="card" data-c="coursework software">
         <div class="card-top"><span class="kind">CentraleSupélec · Robotics project</span><span class="vis">2025–26 · team of 5</span></div>
         <h3>Empathetic companion robot</h3>
         <p>A companion robot for children facing social isolation: an omnidirectional wheeled base driven by an Arduino, a laser-cut and 3D-printed body, and a head with a touchscreen, microphone and speakers on a Raspberry Pi, showing an animated face that talks and reacts to emotions. My part, with one teammate, was the chatbot, built from an open-source empathetic chatbot: Whisper speech recognition, DeBERTa intent and emotion detection, BERT named entities, BlenderBot candidate replies reranked by a cross-encoder, then translation to French and speech. The models run on a PC that talks to the robot over WebSocket, as the Raspberry Pi 3 was too weak to host them.</p>
@@ -376,7 +376,7 @@ footer h2 { margin-bottom: 8px; }
         <a class="link" href="files/empathetic-robot-report-en.pdf" target="_blank" rel="noopener">Report (PDF, English)</a>
       </article>
 
-      <article class="card" data-c="coursework">
+      <article class="card" data-c="coursework software">
         <div class="card-top"><span class="kind">LaFabrique · CentraleSupélec FabLab</span><span class="vis">Sep–Dec 2025</span></div>
         <h3>Automated integrated-circuit sorting system</h3>
         <p>Designed and built a machine that sorts integrated circuits from a tray of unsorted parts. An XYZ gantry built on a reused Prusa MK3S printer frame (stepper motors on TMC2209 drivers, servo-driven Z axis, vacuum pen) picks each chip and places it under a Raspberry Pi 5 camera; an OpenCV + Tesseract OCR pipeline reads the part marking, and the Raspberry Pi sends the moves to an Arduino over serial to drop the chip in its compartment.</p>
@@ -384,28 +384,28 @@ footer h2 { margin-bottom: 8px; }
         <a class="link" href="files/ic-sorting-system-report-en.pdf" target="_blank" rel="noopener">Report (PDF, English)</a>
       </article>
 
-      <article class="card" data-c="coursework">
+      <article class="card" data-c="coursework software">
         <div class="card-top"><span class="kind">CentraleSupélec · Project with Prover Technology</span><span class="vis">2025–26</span></div>
         <h3>Formal design of railway interlocking logic</h3>
         <p>Designed and formally verified the signalling (interlocking) logic of a siding track layout with Prover iLock, the industrial tool used for railway signalling. Safety properties are written in Prover PSL and proven by induction over the system's behaviour.</p>
         <div class="tags"><span>Prover iLock</span><span>PSL</span><span>Formal verification</span><span>Railway</span></div>
       </article>
 
-      <article class="card" data-c="coursework">
+      <article class="card" data-c="coursework software">
         <div class="card-top"><span class="kind">CentraleSupélec · Critical systems</span><span class="vis">2025–26</span></div>
         <h3>Model checking of timed and probabilistic systems</h3>
         <p>Modelled a train / level-crossing system as timed automata and verified its safety in UPPAAL, then analysed communication protocols and queueing systems as Markov chains (DTMC / CTMC) with probabilistic model checking in PRISM.</p>
         <div class="tags"><span>UPPAAL</span><span>PRISM</span><span>Timed automata</span><span>Markov chains</span></div>
       </article>
 
-      <article class="card" data-c="coursework">
+      <article class="card" data-c="coursework software">
         <div class="card-top"><span class="kind">CentraleSupélec · Integration project</span><span class="vis">2024–25</span></div>
         <h3>Traffic simulation of the Paris-Saclay campus</h3>
         <p>Microscopic traffic simulation of the Paris-Saclay campus in SUMO, comparing current demand with a 2030 scenario that adds metro line 18, new bus routes and pedestrian flows to CentraleSupélec, ENS and the university.</p>
         <div class="tags"><span>SUMO</span><span>Traffic modelling</span><span>Simulation</span></div>
       </article>
 
-      <article class="card" data-c="coursework finance">
+      <article class="card" data-c="coursework">
         <div class="card-top"><span class="kind">CentraleSupélec · Integration project</span><span class="vis">Sep–Nov 2025 · team of 5</span></div>
         <h3>Cross-crypto trading signals from limit order books</h3>
         <p>Can Bitcoin's order book predict Ethereum's next moves? From millisecond bid/ask data, we aligned the asynchronous BTC and ETH order books, built 56 features (mid-prices, spreads, order-book imbalance, short-term volatility), measured lead-lag effects with transfer entropy, then backtested two strategies: a BTC → ETH lead-lag rule and a Random Forest classifier.</p>
