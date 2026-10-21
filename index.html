@@ -298,6 +298,22 @@ footer h2 { margin-bottom: 8px; }
         <div class="tags"><span>PyTorch</span><span>DINOv2</span><span>EoMT</span><span>LoRA</span><span>Anomaly detection</span></div>
         <a class="link" href="files/road-scene-anomaly-segmentation-report.pdf" target="_blank" rel="noopener">Report (PDF)</a>
       </article>
+
+      <article class="card" data-c="coursework">
+        <div class="card-top"><span class="kind">Politecnico di Torino · Course project</span><span class="vis">Spring 2026 · team of 4</span></div>
+        <h3>3D bin-packing solver with parallel metaheuristics</h3>
+        <p>Python solver that packs items into vehicles of several types and costs, with 3D rotations and weight limits. A multi-start greedy ensemble seeds a biased random-key genetic algorithm (BRKGA), adaptive large neighbourhood search and tabu search. An extended version runs four worker processes in parallel that share results through a queue, then tries to merge pairs of bins exactly with OR-Tools CP-SAT.</p>
+        <div class="highlight">−8.5% total cost against First-Fit-Decreasing over 20 datasets, at 28 s per dataset. In the parallel version, a join bug made the workers run one after the other (4× over the time budget): it was found and replaced by a shared deadline.</div>
+        <div class="tags"><span>Python</span><span>Metaheuristics</span><span>Multiprocessing</span><span>OR-Tools CP-SAT</span></div>
+      </article>
+
+      <article class="card" data-c="coursework">
+        <div class="card-top"><span class="kind">Politecnico di Torino · Mobile &amp; Sensor Networks</span><span class="vis">Spring 2026 · labs</span></div>
+        <h3>Linux network labs: Wi-Fi, Bluetooth, TCP/UDP and Kubernetes</h3>
+        <p>Hands-on labs on Linux. Scanned Wi-Fi and Bluetooth surroundings from the command line (ip, iw, traceroute, bluez) and wrote Python scripts to parse the logs and track signal quality per access point and channel. Captured 802.11 traffic in monitor mode with Wireshark and tshark and exported trace fields for analysis. Ran TCP and UDP exchanges between two hosts and deployed services on a Kubernetes cluster of remote CrownLabs virtual machines over SSH.</p>
+        <div class="highlight">Read real failures in the traces: resets on a closed port, packet loss, duplicate ACKs, out-of-order segments and retransmissions; then stress-tested a pod before and after capping its CPU.</div>
+        <div class="tags"><span>Linux</span><span>Wireshark</span><span>tshark</span><span>TCP/UDP</span><span>Kubernetes</span><span>Python</span></div>
+      </article>
       <article class="card" data-c="hackathon">
         <div class="card-top"><span class="kind">AMD × Lablab.ai hackathon</span><span class="vis">Private code — on request</span></div>
         <h3>PolyM.AI.rket: multi-agent debate for forecasting</h3>
