@@ -20,6 +20,7 @@
     <p>Machine unlearning removes the influence of some training examples without retraining from scratch. I studied a popular shortcut, <strong>NegGrad+</strong>, and found that it becomes unreliable when the examples to forget all come from <strong>the same class</strong>.</p>
   </div>
   <ul class="toc">
+    <li><a href="#status">0 · Where the project stands</a></li>
     <li><a href="#setting">1 · The setting</a></li>
     <li><a href="#why">2 · Why it can run away</a></li>
     <li><a href="#findings">3 · What I found</a></li>
@@ -34,6 +35,70 @@
 </div></header>
 
 <main class="wrap">
+
+<section id="status">
+  <h2>Where the project stands</h2>
+  <p><b>Status, 21 October 2026: experiments paused, write-up done.</b> In about ten days the project went from one surprising failure to 13 studies, 12 of them planned in writing before they ran. All their analyses are frozen, and the most recent ones were re-run to check them. I decided not to submit the work to a conference: it is published here as a documented personal research project. The code is private; the technical working paper is available on request.</p>
+  <div class="two">
+    <div class="stat"><b>13</b><span>studies run, from the first failure to per-class tuning</span></div>
+    <div class="stat"><b>12 / 13</b><span>planned and committed before running (one post hoc diagnostic)</span></div>
+  </div>
+  <div class="two" style="margin-top:18px">
+    <div class="stat"><b>6</b><span>frozen analyses re-run and reproduced exactly</span></div>
+    <div class="stat"><b>1</b><span>study fully prepared but never run (PCGrad)</span></div>
+  </div>
+
+  <h3>Timeline</h3>
+  <p class="timeline-note">Click a step to open the corresponding study below.</p>
+  <div class="scroll"><table class="data" id="timeline">
+    <thead><tr><th>Date (2026)</th><th>What happened</th></tr></thead>
+    <tbody>
+      <tr><td>early Oct.</td><td><a href="#s01">Original study (v3)</a>: “success” only through collapsed models; <a href="#s02">post hoc diagnostics</a> point at BatchNorm.</td></tr>
+      <tr><td>13–14 Oct.</td><td>Everything moved into one repository; <a href="#s03">replication v1.3</a> on Fashion-MNIST and CIFAR-10.</td></tr>
+      <tr><td>14–15 Oct.</td><td><a href="#s05">BatchNorm study v1.0</a> (A vs E1 vs E1D, two amendments before the main run).</td></tr>
+      <tr><td>15 Oct.</td><td><a href="#s06">Control of C on CIFAR-10</a>; <a href="#s04">NegGrad+ vs random labels</a> with the clipping burden.</td></tr>
+      <tr><td>16 Oct.</td><td><a href="#s08">Continuous gradient measure</a>: the NegGrad+-specific signature.</td></tr>
+      <tr><td>16–17 Oct.</td><td><a href="#s09">Tiny ImageNet extension</a> with a membership-inference check.</td></tr>
+      <tr><td>17 Oct.</td><td>PCGrad trade-off study frozen (protocol, analysis, calibration, notebook), <b>never run</b>.</td></tr>
+      <tr><td>17–18 Oct.</td><td><a href="#s07">Concentration study</a>: 68 mixes separate concentration from class difficulty.</td></tr>
+      <tr><td>18–19 Oct.</td><td><a href="#s10">Source of the statistics (v1.2)</a>, after a calibration step that ruled out one test.</td></tr>
+      <tr><td>19 Oct.</td><td><a href="#s11">Frozen alternative target</a>, seeds raised from 10 to 12 by the power simulation.</td></tr>
+      <tr><td>19–20 Oct.</td><td><a href="#s12">Bundled BatchNorm fix (RD64)</a>.</td></tr>
+      <tr><td>20 Oct.</td><td><a href="#s13">Per-class tuning</a>, the last experiment.</td></tr>
+      <tr><td>20–21 Oct.</td><td>Write-up, <a href="#checked">audit</a> of code, analyses and numbers, and one correction (<a href="#trap">collapse vs BatchNorm statistics</a>).</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="two">
+    <div>
+      <h3>What is settled</h3>
+      <ul class="list">
+        <li>In these BatchNorm networks, concentrated deletion requests make NegGrad+ unreliable; spread ones of the same size do not.</li>
+        <li>The effect goes beyond the difficulty of the classes involved, and is far stronger under NegGrad+ than under a bounded control.</li>
+        <li>The fixes tried (BatchNorm changes, a bounded target, per-class tuning) protect accuracy, but mostly by forgetting less.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>What is still open</h3>
+      <ul class="list">
+        <li>Why: BatchNorm is the main suspect, but no study isolated a mechanism.</li>
+        <li>Whether any method can forget a concentrated request as well as retraining does, without breaking the model.</li>
+        <li>Whether any of this measures real erasure or privacy: it was never tested.</li>
+        <li>How far it generalises beyond a small CNN on Fashion-MNIST.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>What I would do next <span class="timeline-note">(ideas, none of them run)</span></h3>
+  <ol class="steps">
+    <li><b>Run the PCGrad study</b> already frozen on 17 October: does resolving conflicts between the “keep” and “forget” gradients improve the trade-off?</li>
+    <li><b>Swap BatchNorm for GroupNorm or LayerNorm</b>: the most direct test of the BatchNorm suspicion.</li>
+    <li><b>Measure forgetting properly</b> for the fixes (membership inference, distance to the retrained model), since they may only look good because they act weakly.</li>
+    <li><b>Try other unlearning methods</b> on concentrated requests, to see whether the problem is specific to NegGrad+.</li>
+    <li><b>Predict risky requests</b>: check on existing data whether simple batch statistics, computed before unlearning, flag the requests that will fail.</li>
+    <li><b>Close the gaps of the audit</b>: replay the original study with recalibrated evaluation, and recover the raw Tiny ImageNet tables.</li>
+  </ol>
+</section>
 
 <section id="setting">
   <h2>The setting</h2>
@@ -160,7 +225,7 @@
   <p><button type="button" class="btn" data-toggle-all>Open all</button></p>
   <p class="timeline-note">Post hoc: the analysis was decided after seeing data. Pre-specified: question, test and wording fixed and committed before the run. Exploratory: pre-specified, but with fewer seeds than the protocol itself requires for a firm claim.</p>
 
-  <details class="study" data-r="problem" data-s="pre">
+  <details class="study" id="s01" data-r="problem" data-s="pre">
     <summary><span class="n">01</span><span class="t">The original study (v3): a success for the wrong reason</span><span class="badge">criterion fixed in advance · 5 seeds</span><span class="s">Fashion-MNIST, CNN, concentrated vs random forget sets</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>Does NegGrad+ “forget better” when the 600 examples to forget come from a single class, compared with a random set of the same size? The directional criterion was written down before the run.</dd>
@@ -170,7 +235,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="why" data-s="post">
+  <details class="study" id="s02" data-r="why" data-s="post">
     <summary><span class="n">02</span><span class="t">Diagnostics 2–3: is it the BatchNorm treatment?</span><span class="badge">post hoc · 5 seeds</span><span class="s">Which way of handling BatchNorm avoids the blow-up?</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>The concentrated runs looked like an optimisation blow-up. Does it depend on how BatchNorm normalises the batch to forget?</dd>
@@ -180,7 +245,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="problem" data-s="expl">
+  <details class="study" id="s03" data-r="problem" data-s="expl">
     <summary><span class="n">03</span><span class="t">Replication v1.3: does it hold with new seeds, and on CIFAR-10?</span><span class="badge">pre-specified, exploratory · 5 + 3 seeds</span><span class="s">A vs C on all 10 classes and 3 weights</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>With newly derived seeds, draws and models, are concentrated runs more unstable than spread ones, under A and under C?</dd>
@@ -190,7 +255,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="why" data-s="pre">
+  <details class="study" id="s04" data-r="why" data-s="pre">
     <summary><span class="n">04</span><span class="t">NegGrad+ vs random labels, first try: the clipping burden</span><span class="badge">pre-specified · 10 seeds (5 reused)</span><span class="s">Is the effect specific to NegGrad+?</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>Is the concentration effect specific to NegGrad+'s unbounded “push up”, or does it also appear with a bounded objective?</dd>
@@ -200,7 +265,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="why" data-s="expl">
+  <details class="study" id="s05" data-r="why" data-s="expl">
     <summary><span class="n">05</span><span class="t">BatchNorm study v1.0: which part of BatchNorm matters?</span><span class="badge">pre-specified, exploratory · 5 seeds</span><span class="s">A vs E1 vs E1D, 600 runs</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>Does the instability come from the gradient flowing through the batch statistics, from the statistics themselves, or from neither?</dd>
@@ -210,7 +275,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="beyond" data-s="expl">
+  <details class="study" id="s06" data-r="beyond" data-s="expl">
     <summary><span class="n">06</span><span class="t">Control of C on CIFAR-10: does freezing BatchNorm cost accuracy?</span><span class="badge">pre-specified, exploratory · 3 seeds</span><span class="s">ResNet-18, 33 cells per weight</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>C avoided divergence on CIFAR-10. Does it pay for it with accuracy, and is that loss real or an evaluation artefact?</dd>
@@ -220,7 +285,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="problem" data-s="expl">
+  <details class="study" id="s07" data-r="problem" data-s="expl">
     <summary><span class="n">07</span><span class="t">Concentration beyond class identity: 68 mixes</span><span class="badge">pre-specified, exploratory · 10 new seeds</span><span class="s">The study that separates concentration from class difficulty</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>Is the effect due to concentration, or just to some classes being hard?</dd>
@@ -230,7 +295,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="why" data-s="pre">
+  <details class="study" id="s08" data-r="why" data-s="pre">
     <summary><span class="n">08</span><span class="t">NegGrad+ vs random labels, done properly: a continuous measure</span><span class="badge">pre-specified · 10 new seeds</span><span class="s">Ḡ, the mean log size of the gradients before clipping</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>Same as study 04, with a measure that cannot get stuck at zero.</dd>
@@ -240,7 +305,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="beyond" data-s="expl">
+  <details class="study" id="s09" data-r="beyond" data-s="expl">
     <summary><span class="n">09</span><span class="t">Tiny ImageNet: is the signal still there on harder data?</span><span class="badge">pre-specified, exploratory · 5 new seeds</span><span class="s">200 classes, ResNet-18, one weight</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>Does the gradient-size signal of study 08 appear outside Fashion-MNIST?</dd>
@@ -250,7 +315,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="why" data-s="expl">
+  <details class="study" id="s10" data-r="why" data-s="expl">
     <summary><span class="n">10</span><span class="t">The source of the statistics alone (v1.2)</span><span class="badge">pre-specified, exploratory · 10 new seeds</span><span class="s">E1D vs RD64: only where the statistics come from changes</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>With the gradient path held fixed, does it matter whether the batch to forget is normalised with its <em>own</em> statistics or with those of the concurrent retained batch?</dd>
@@ -260,7 +325,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="fix" data-s="pre">
+  <details class="study" id="s11" data-r="fix" data-s="pre">
     <summary><span class="n">11</span><span class="t">A frozen alternative target (CF)</span><span class="badge">pre-specified · 12 new seeds</span><span class="s">Replace the unbounded push with a bounded target</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>If NegGrad+ fails because its push is unbounded, does descending towards a fixed, sensible target avoid the concentration penalty?</dd>
@@ -270,7 +335,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="fix" data-s="pre">
+  <details class="study" id="s12" data-r="fix" data-s="pre">
     <summary><span class="n">12</span><span class="t">A bundled BatchNorm fix (RD64)</span><span class="badge">pre-specified · 14 new seeds</span><span class="s">Normalise the batch to forget with retained-batch statistics</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>Does the RD64 treatment, which never diverged in study 10, reduce the concentration penalty on retained utility?</dd>
@@ -280,7 +345,7 @@
     </dl></div>
   </details>
 
-  <details class="study" data-r="fix" data-s="pre">
+  <details class="study" id="s13" data-r="fix" data-s="pre">
     <summary><span class="n">13</span><span class="t">Per-class tuning: does a good setting suffice?</span><span class="badge">pre-specified · 3 + 12 new seeds</span><span class="s">20 settings per class, chosen by a fixed rule</span></summary>
     <div class="study-body"><dl>
       <dt>Question</dt><dd>Maybe NegGrad+ was simply badly tuned for concentrated requests. Does the penalty survive when the learning rate and the forget weight are chosen separately for each class?</dd>
@@ -596,6 +661,14 @@ seg('[aria-label="Evaluation"]', "ev", drawTrap); drawTrap("nat");
   b.addEventListener("click", () => { const open = b.textContent === "Open all"; all().forEach(d => d.open = open); b.textContent = open ? "Close all" : "Open all"; });
   if (location.hash === "#open-all") b.click();
 })();
+
+/* ---------- Timeline links open the study they point to ---------- */
+function openFromHash() {
+  const d = location.hash && location.hash.length > 1 && document.querySelector(location.hash);
+  if (d && d.matches("details.study")) { d.hidden = false; d.open = true; d.scrollIntoView({ block: "start" }); }
+}
+document.querySelectorAll('#timeline a[href^="#s"]').forEach(a => a.addEventListener("click", e => { e.preventDefault(); history.replaceState(null, "", a.getAttribute("href")); openFromHash(); }));
+openFromHash();
 
 /* ---------- Study filters ---------- */
 (function () {
