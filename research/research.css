@@ -68,7 +68,7 @@ p { margin: 0 0 14px; }
 .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 4px 0 12px; }
 .controls label { font-size: 14px; }
 .btn, .seg button {
-  font: 600 15px "Pixelify Sans", "IBM Plex Mono", monospace;
+  font: 600 14px "IBM Plex Mono", monospace;
   color: var(--c4); background: var(--c0);
   border: 3px solid var(--c4); box-shadow: 3px 3px 0 var(--c4);
   padding: 5px 12px; cursor: pointer;

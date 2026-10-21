@@ -21,6 +21,7 @@
   </div>
   <ul class="toc">
     <li><a href="#status">0 · Where the project stands</a></li>
+    <li><a href="#basics">★ The basics, from zero</a></li>
     <li><a href="#setting">1 · The setting</a></li>
     <li><a href="#why">2 · Why it can run away</a></li>
     <li><a href="#findings">3 · What I found</a></li>
@@ -98,6 +99,112 @@
     <li><b>Predict risky requests</b>: check on existing data whether simple batch statistics, computed before unlearning, flag the requests that will fail.</li>
     <li><b>Close the gaps of the audit</b>: replay the original study with recalibrated evaluation, and recover the raw Tiny ImageNet tables.</li>
   </ol>
+</section>
+
+<section id="basics">
+  <h2>The basics, from zero</h2>
+  <p>Everything you need to follow the rest of the page, with no prior knowledge: what the model is, how it learns, what BatchNorm does, and the statistics behind every number.</p>
+
+  <h3 id="b-net">1 · An image classifier gives a score to each class</h3>
+  <p>The model looks at a 28×28 grey image and outputs 10 numbers, one per class (t-shirt, trouser, …, ankle boot). These raw scores are called <b>logits</b>. The <b>softmax</b> turns them into probabilities that add up to 1: <code>p<sub>k</sub> = e<sup>z<sub>k</sub></sup> / Σ<sub>j</sub> e<sup>z<sub>j</sub></sup></code>. The error on one image is the <b>cross-entropy</b> <code>−log p<sub>true</sub></code>: close to 0 when the model is confident and right, very large when it gives the true class a tiny probability.</p>
+  <div class="panel">
+    <h3>Try it: three classes</h3>
+    <div class="controls">
+      <label>boot <input id="z0" type="range" min="-4" max="6" step="0.1" value="3" style="width:150px"></label>
+      <label>sneaker <input id="z1" type="range" min="-4" max="6" step="0.1" value="1" style="width:150px"></label>
+      <label>sandal <input id="z2" type="range" min="-4" max="6" step="0.1" value="0" style="width:150px"></label>
+    </div>
+    <svg class="fig" id="figSoft" viewBox="0 0 640 170" role="img" aria-label="Logits turned into probabilities by the softmax"></svg>
+    <p class="hint" id="softText"></p>
+  </div>
+
+  <h3 id="b-cnn">2 · The network used: a small CNN with BatchNorm</h3>
+  <p>A <b>convolutional neural network</b> slides small 3×3 filters over the image to detect local patterns (edges, then textures, then shapes). The one used in almost every study has 1.7 million parameters. Click a layer.</p>
+  <div class="panel">
+    <svg class="fig" id="figCNN" viewBox="0 0 640 200" role="img" aria-label="Layers of the CNN, clickable"></svg>
+    <p class="hint" id="cnnText"></p>
+  </div>
+  <p>The original model <b>O</b> is trained for 15 passes over the 55,000 images (epochs), in batches of 128, with stochastic gradient descent (learning rate 0.05 decreasing along a cosine curve, momentum 0.9, weight decay 5·10⁻⁴). It reaches about 93% accuracy on the 10,000 test images. A fresh <b>O</b> is trained for every seed.</p>
+
+  <h3 id="b-learn">3 · How a network learns, and how unlearning hijacks it</h3>
+  <p>Training repeats one move thousands of times: compute the error on a batch, compute its <b>gradient</b> (the direction in which each parameter would increase the error), and take a small step the other way: <code>θ ← θ − η·gradient</code>, where η is the <b>learning rate</b>. Unlearning reuses the same machinery for one epoch (425 steps) on the data to keep, in batches of 128, each step paired with a batch of 64 images to forget:</p>
+  <ul class="list">
+    <li><b>Fine-tuning</b> (reference): keep training on the data to keep only.</li>
+    <li><b>NegGrad+</b>: minimise <code>α·error(keep) − (1−α)·error(forget)</code>, i.e. also climb the error on the data to forget. The forget weight 1−α is small (0.001, 0.01 or 0.05) because climbing is dangerous.</li>
+    <li><b>Safety belt</b>: if the gradient is longer than 5, it is shortened to 5 (gradient clipping).</li>
+    <li><b>Retrained model R</b>: trained from scratch without the forgotten images; the ideal everyone tries to approach.</li>
+  </ul>
+
+  <h3 id="b-bn">4 · BatchNorm, and why a one-class batch is special</h3>
+  <p>Inside the network, each channel of each convolution produces numbers whose scale drifts during training. A <b>BatchNorm</b> layer recentres and rescales them using the statistics of the current batch: <code>x̂ = (x − mean) / √(variance + ε)</code>, then multiplies and shifts by two learned numbers. During training it uses the <b>batch's own</b> mean and variance and slowly updates a stored average (<code>stored ← 0.9·stored + 0.1·batch</code>); at test time it uses the stored average.</p>
+  <div class="panel">
+    <h3>Try it: one channel, one batch of 16 images</h3>
+    <div class="controls"><span class="seg" role="group" aria-label="Batch content">
+      <button type="button" data-b="mixed" aria-pressed="true">Mixed batch</button>
+      <button type="button" data-b="single" aria-pressed="false">One-class batch</button>
+    </span></div>
+    <svg class="fig" id="figBN" viewBox="0 0 640 250" role="img" aria-label="Values of one channel before and after BatchNorm"></svg>
+    <p class="hint" id="bnText"></p>
+    <p class="hint"><b>Illustration</b>: the 16 values are made up to show the arithmetic; the real network has 32 to 128 channels per layer.</p>
+  </div>
+  <p>Two consequences matter for this project. During NegGrad+, a one-class forget batch is normalised by its own unusual statistics, and the gradient flows through them. And the forget batches also pull the stored averages towards one class: if you then evaluate the model with those stored statistics, it can look broken. <b>Recalibration</b> means recomputing the stored statistics exactly on the data to keep, without touching any weight; most results here use it.</p>
+
+  <h3 id="b-stats">5 · The statistics, with the real data</h3>
+  <p>Every study is repeated with several <b>seeds</b>: a seed fixes all the randomness (initial weights, image order, which images are forgotten), so each seed is an independent rerun with its own model. One seed gives one number; the statistics are done on these numbers. Below are the 12 real values of the tuning study's penalty (how many more accuracy points concentrated requests cost than spread ones). Change how many seeds are used.</p>
+  <div class="panel">
+    <div class="controls"><label for="nSeeds">seeds used: <output id="nOut"></output></label><input id="nSeeds" type="range" min="2" max="12" step="1" value="12"></div>
+    <svg class="fig" id="figStats" viewBox="0 0 640 200" role="img" aria-label="Seed values, mean, confidence intervals and equivalence margin"></svg>
+    <div class="scroll"><table class="data" id="statTable"></table></div>
+    <p class="hint">Mean = average of the seeds. SD = how much seeds differ. Standard error SE = SD/√n, the uncertainty of the mean. The 95% confidence interval (CI) is mean ± t × SE, where t comes from Student's distribution with n−1 degrees of freedom. The t-statistic = mean / SE; the <b>p-value</b> is the chance of a t at least that large if the true penalty were 0. <b>Equivalence</b> (TOST): the 90% interval must lie inside a margin fixed in advance (±2 points). A result can be both “detected” (CI excludes 0) and “equivalent” (inside the margin): a real but small effect. (The values are rounded to 2 decimals here, so t may differ from the frozen analysis, 11.95, in the last digit.)</p>
+  </div>
+  <ul class="list">
+    <li><b>Why seeds, not images?</b> The 11 runs of one seed share the same model, so they are not independent; counting them separately would fake precision.</li>
+    <li><b>Holm correction</b>: when a study runs several tests, p-values are adjusted so that the chance of any false alarm stays at 5%.</li>
+    <li><b>Power</b>: before a study, thousands of fake studies are simulated to find how many seeds are needed to detect a given effect at least 80% of the time. <b>Calibration</b>: the same simulations without any effect check that the test raises false alarms only about 5% of the time.</li>
+  </ul>
+
+  <h3 id="b-model">6 · The concentration model: entropy and power means</h3>
+  <p>To separate “concentrated” from “made of hard classes”, two tools were needed.</p>
+  <div class="panel">
+    <h3>Label entropy: how mixed is a forget set?</h3>
+    <div class="controls"><span class="seg" role="group" aria-label="Number of classes">
+      <button type="button" data-k="1" aria-pressed="true">1 class</button><button type="button" data-k="2" aria-pressed="false">2</button>
+      <button type="button" data-k="5" aria-pressed="false">5</button><button type="button" data-k="10" aria-pressed="false">10 classes</button>
+    </span></div>
+    <svg class="fig" id="figH" viewBox="0 0 640 120" role="img" aria-label="Class proportions and label entropy"></svg>
+    <p class="hint" id="hText"></p>
+  </div>
+  <div class="panel">
+    <h3>Power mean: many ways to combine two classes</h3>
+    <p class="hint">Suppose class A alone gives an early forget loss of 1 and class B alone gives 9. What should a 50/50 mix give? It depends on how difficulties combine; the power mean M<sub>λ</sub> = (½·1<sup>λ</sup> + ½·9<sup>λ</sup>)<sup>1/λ</sup> covers a whole family.</p>
+    <div class="controls"><label for="lam">λ = <output id="lamOut"></output></label><input id="lam" type="range" min="-3" max="3" step="0.1" value="0"></div>
+    <svg class="fig" id="figM" viewBox="0 0 640 110" role="img" aria-label="Power mean of two class difficulties"></svg>
+    <p class="hint" id="mText"></p>
+  </div>
+  <p>The study fitted, for each seed, <code>early loss = log₁₀ M<sub>λ</sub>(class mix) + γ·entropy + noise</code>, letting λ take its best value between −3 and 3. Whatever the combination rule, something was left over: <b>γ = −0.246</b> decade per bit. Going from 1 class (0 bits) to 10 classes (3.32 bits) therefore lowers the early forget loss by about 0.246 × 3.32 ≈ 0.82 decade, a factor of about 6.6, <em>beyond</em> what the classes themselves predict.</p>
+
+  <h3 id="b-values">7 · All the values, in plain words</h3>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Value</th><th>Study</th><th>What it means</th></tr></thead>
+    <tbody>
+      <tr><td class="num">26 / 55</td><td>original</td><td>runs ending at ≤ 20% accuracy, all concentrated: the “success” came from broken-looking models.</td></tr>
+      <tr><td class="num">29 / 30</td><td>diagnostic 2</td><td>concentrated tasks that diverged with the original implementation A; 0 / 30 with B or C.</td></tr>
+      <tr><td class="num">0.86</td><td>replication</td><td>share of concentrated runs more unstable than the paired spread run (0.5 would mean no difference).</td></tr>
+      <tr><td class="num">30 / 50</td><td>replication</td><td>concentrated runs that diverged at weight 0.01 (spread: never).</td></tr>
+      <tr><td class="num">62 / 100, 67 / 450</td><td>concentration</td><td>divergences with 1-class and 2-class forget sets; none with 5 or 10 classes.</td></tr>
+      <tr><td class="num">γ = −0.246</td><td>concentration</td><td>early forget loss falls by 0.246 decade per bit of mixing, beyond class difficulty (95% CI −0.263 to −0.228).</td></tr>
+      <tr><td class="num">0.705 vs 0.053</td><td>gradient measure</td><td>how much concentration raises the typical gradient size (decades) under NegGrad+ vs random labels: ≈5× vs ≈1.13×.</td></tr>
+      <tr><td class="num">0.652</td><td>gradient measure</td><td>their difference, positive in all 10 seeds (95% CI 0.607–0.696).</td></tr>
+      <tr><td class="num">0 / 60 / 150</td><td>BatchNorm study</td><td>E1 divergences out of 150 concentrated runs at weights 0.001 / 0.01 / 0.05: no single variant is a cure.</td></tr>
+      <tr><td class="num">0.0288</td><td>Tiny ImageNet</td><td>same gradient contrast on harder data: positive in every seed and class, but much smaller.</td></tr>
+      <tr><td class="num">0.388</td><td>Tiny ImageNet</td><td>membership-inference AUC for NegGrad+ (0.5 = chance): an inversion, not erasure.</td></tr>
+      <tr><td class="num">0.670</td><td>statistics source</td><td>how much borrowing retained-batch statistics changes the early loss of mixed vs one-class sets (decades).</td></tr>
+      <tr><td class="num">16.2</td><td>frozen target</td><td>extra concentration penalty of NegGrad+ over the bounded target (points); but the bounded target barely forgot.</td></tr>
+      <tr><td class="num">13.7</td><td>RD64</td><td>penalty removed by the bundled BatchNorm fix (points), in all 14 seeds; divergences 84 / 140 → 0 / 140.</td></tr>
+      <tr><td class="num">1.07 vs 14.2</td><td>tuning</td><td>penalty with per-class settings vs default settings (points); only 3 / 10 classes reached the retrained model's strength.</td></tr>
+      <tr><td class="num">10.8% → 74.2%</td><td>audit</td><td>mean test accuracy of “collapsed” runs before and after recomputing BatchNorm statistics (original model ≈ 93%).</td></tr>
+    </tbody>
+  </table></div>
 </section>
 
 <section id="setting">
@@ -660,6 +767,142 @@ seg('[aria-label="Evaluation"]', "ev", drawTrap); drawTrap("nat");
   const b = document.querySelector("[data-toggle-all]"), all = () => document.querySelectorAll("details.study");
   b.addEventListener("click", () => { const open = b.textContent === "Open all"; all().forEach(d => d.open = open); b.textContent = open ? "Close all" : "Open all"; });
   if (location.hash === "#open-all") b.click();
+})();
+
+/* ---------- Basics: softmax ---------- */
+(function () {
+  const ids = ["z0", "z1", "z2"], names = ["boot", "sneaker", "sandal"], fig = document.getElementById("figSoft");
+  function draw() {
+    clear(fig);
+    const z = ids.map(i => +document.getElementById(i).value), m = Math.max(...z), e = z.map(v => Math.exp(v - m)), s = e.reduce((a, b) => a + b), p = e.map(v => v / s);
+    names.forEach((n, i) => { const y = 20 + i * 48;
+      el("text", { x: 90, y: y + 18, "text-anchor": "end", "font-size": 13 }, fig, n);
+      el("text", { x: 150, y: y + 18, "text-anchor": "end", "font-size": 12 }, fig, "z = " + z[i].toFixed(1));
+      el("rect", { x: 165, y, width: 400, height: 26, fill: C.c0, stroke: C.c4, "stroke-width": 2 }, fig);
+      el("rect", { x: 165, y, width: 400 * p[i], height: 26, fill: i === 0 ? C.c4 : C.c2 }, fig);
+      el("text", { x: 575, y: y + 18, "font-size": 13, "font-weight": 700 }, fig, (p[i] * 100).toFixed(1) + "%"); });
+    document.getElementById("softText").textContent = `If the true class is “boot”, the cross-entropy is −ln ${p[0].toFixed(3)} = ${(-Math.log(p[0])).toFixed(2)}. Push the boot score down and watch it grow: that is what NegGrad+ does to the images to forget.`;
+  }
+  ids.forEach(i => document.getElementById(i).addEventListener("input", draw)); draw();
+})();
+
+/* ---------- Basics: the CNN (exact architecture of the notebooks) ---------- */
+(function () {
+  const L = [
+    { t: "Input", s: "1×28×28", d: "One grey 28×28 image, normalised (mean 0.286, standard deviation 0.353)." },
+    { t: "Conv + BN + ReLU", s: "32×28×28", d: "32 filters of size 3×3 slide over the image (288 weights), then BatchNorm (32 channels) and ReLU, which keeps positive values only." },
+    { t: "Conv + BN + ReLU", s: "64×28×28", d: "64 filters of size 3×3 over the 32 previous channels (18,432 weights), BatchNorm, ReLU." },
+    { t: "Max-pool", s: "64×14×14", d: "Keeps the largest value of each 2×2 square: the image shrinks to 14×14." },
+    { t: "Conv + BN + ReLU", s: "128×14×14", d: "128 filters of size 3×3 (73,728 weights), BatchNorm, ReLU." },
+    { t: "Max-pool", s: "128×7×7", d: "Shrinks to 7×7: 128 × 7 × 7 = 6,272 numbers describe the image." },
+    { t: "Linear + ReLU", s: "256", d: "A fully connected layer mixes the 6,272 numbers into 256 (1,605,888 weights, most of the model)." },
+    { t: "Linear", s: "10 logits", d: "One score per class (2,570 weights). Softmax turns them into probabilities. Total: 1,701,354 parameters, of which 448 belong to the three BatchNorm layers." }];
+  const fig = document.getElementById("figCNN"), txt = document.getElementById("cnnText");
+  function draw(sel) {
+    clear(fig);
+    L.forEach((l, i) => { const x = 6 + i * 79, bn = l.t.includes("BN"), g = el("g", { tabindex: 0, role: "button", "aria-label": l.t + " " + l.s, style: "cursor:pointer" }, fig);
+      el("rect", { x, y: 40, width: 70, height: 110, fill: sel === i ? C.c4 : bn ? C.c1 : C.c0, stroke: C.c4, "stroke-width": 2.5 }, g);
+      l.t.split(" + ").forEach((w, j, a) => el("text", { x: x + 35, y: 85 - (a.length - 1) * 8 + j * 16, "text-anchor": "middle", "font-size": 10.5, "font-weight": 700, fill: sel === i ? C.c0 : C.c4 }, g, w));
+      el("text", { x: x + 35, y: 170, "text-anchor": "middle", "font-size": 10 }, g, l.s);
+      if (i < L.length - 1) el("path", { d: `M${x + 71},95 L${x + 78},95`, stroke: C.c4, "stroke-width": 2.5 }, fig);
+      g.addEventListener("click", () => draw(i)); g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); draw(i); } }); });
+    el("text", { x: 320, y: 22, "text-anchor": "middle", "font-size": 12 }, fig, "image → features → class scores (shaded boxes contain BatchNorm)");
+    txt.innerHTML = `<b>${L[sel].t} → ${L[sel].s}.</b> ${L[sel].d}`;
+  }
+  draw(1);
+})();
+
+/* ---------- Basics: BatchNorm on one channel (illustrative values) ---------- */
+(function () {
+  const B = { mixed: [-1.6, -1.1, -0.8, -0.6, -0.4, -0.2, -0.1, 0, 0.1, 0.3, 0.5, 0.6, 0.9, 1.1, 1.4, 1.9],
+              single: [1.0, 1.1, 1.2, 1.3, 1.35, 1.4, 1.45, 1.5, 1.5, 1.55, 1.6, 1.7, 1.75, 1.8, 1.9, 2.0] };
+  const fig = document.getElementById("figBN");
+  function draw(k) {
+    clear(fig);
+    const v = B[k], m = v.reduce((a, b) => a + b) / v.length, va = v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length;
+    const own = v.map(x => (x - m) / Math.sqrt(va + 1e-5)), stored = v.map(x => x);   // stored statistics: mean 0, variance 1
+    const L = 170, R = 620, X = x => L + (x + 3) / 6 * (R - L);
+    [-3, -2, -1, 0, 1, 2, 3].forEach(t => { el("line", { x1: X(t), y1: 10, x2: X(t), y2: 215, stroke: t === 0 ? C.c3 : C.c1, "stroke-width": t === 0 ? 2 : 1 }, fig);
+      el("text", { x: X(t), y: 232, "text-anchor": "middle", "font-size": 11 }, fig, t); });
+    [["raw values", v, 40], ["÷ batch's own stats", own, 110], ["÷ stored stats", stored, 180]].forEach(([n, arr, y]) => {
+      el("text", { x: L - 12, y: y + 4, "text-anchor": "end", "font-size": 12 }, fig, n);
+      arr.forEach((x, i) => el("circle", { cx: X(Math.max(-3, Math.min(3, x))), cy: y + ((i % 3) - 1) * 7, r: 5, fill: k === "single" ? C.c4 : C.c2, stroke: C.c0, "stroke-width": 1 }, fig)); });
+    const upd = 0.9 * 0 + 0.1 * m;
+    document.getElementById("bnText").textContent = k === "mixed"
+      ? `Mixed batch: its mean (${m.toFixed(2)}) and spread are close to the stored statistics (mean 0, variance 1), so both normalisations give similar results.`
+      : `One-class batch: all values are high (mean ${m.toFixed(2)}). Normalised with its own statistics, it is re-centred to look like an ordinary mixed batch, so the layer above no longer sees that these images are special, and the gradient now flows through those unusual statistics (that is the suspicion; no study proved it is the mechanism). The stored mean is also pulled from 0 to ${upd.toFixed(2)} by this single batch.`;
+  }
+  seg('[aria-label="Batch content"]', "b", draw); draw("mixed");
+})();
+
+/* ---------- Basics: statistics on the real seed values (tuning study) ---------- */
+function lgamma(x) { const g = 7, c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x);
+  x -= 1; let a = c[0]; const t = x + g + 0.5; for (let i = 1; i < 9; i++) a += c[i] / (x + i);
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a); }
+function betacf(a, b, x) { let qab = a + b, qap = a + 1, qam = a - 1, c = 1, d = 1 - qab * x / qap; if (Math.abs(d) < 1e-30) d = 1e-30; d = 1 / d; let h = d;
+  for (let m = 1; m <= 200; m++) { const m2 = 2 * m; let aa = m * (b - m) * x / ((qam + m2) * (a + m2)); d = 1 + aa * d; if (Math.abs(d) < 1e-30) d = 1e-30; c = 1 + aa / c; if (Math.abs(c) < 1e-30) c = 1e-30; d = 1 / d; h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2)); d = 1 + aa * d; if (Math.abs(d) < 1e-30) d = 1e-30; c = 1 + aa / c; if (Math.abs(c) < 1e-30) c = 1e-30; d = 1 / d; const del = d * c; h *= del; if (Math.abs(del - 1) < 1e-12) break; }
+  return h; }
+function ibeta(a, b, x) { if (x <= 0) return 0; if (x >= 1) return 1; const bt = Math.exp(lgamma(a + b) - lgamma(a) - lgamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  return x < (a + 1) / (a + b + 2) ? bt * betacf(a, b, x) / a : 1 - bt * betacf(b, a, 1 - x) / b; }
+function tSF(t, df) { const x = df / (df + t * t), p = 0.5 * ibeta(df / 2, 0.5, x); return t > 0 ? p : 1 - p; }   // P(T > t)
+function tQ(q, df) { let lo = 0, hi = 100; for (let i = 0; i < 100; i++) { const mid = (lo + hi) / 2; if (1 - tSF(mid, df) < q) lo = mid; else hi = mid; } return (lo + hi) / 2; }
+(function () {
+  const D = [1.27, 0.86, 1.19, 1.49, 0.47, 1.08, 1.16, 1.32, 1.48, 1.02, 0.86, 0.69], fig = document.getElementById("figStats"), tab = document.getElementById("statTable"), nS = document.getElementById("nSeeds");
+  function draw() {
+    clear(fig);
+    const n = +nS.value, v = D.slice(0, n), m = v.reduce((a, b) => a + b) / n, sd = Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1)), se = sd / Math.sqrt(n);
+    const t95 = tQ(0.975, n - 1), t90 = tQ(0.95, n - 1), tstat = m / se, p = 2 * tSF(Math.abs(tstat), n - 1);
+    const ci = [m - t95 * se, m + t95 * se], ci90 = [m - t90 * se, m + t90 * se], eq = ci90[0] > -2 && ci90[1] < 2, det = ci[0] > 0;
+    const lo = -2.6, hi = 3.4, L = 40, R = 620, X = x => L + (Math.max(lo, Math.min(hi, x)) - lo) / (hi - lo) * (R - L);
+    el("rect", { x: X(-2), y: 10, width: X(2) - X(-2), height: 150, fill: C.c1, opacity: .6 }, fig);
+    el("text", { x: X(2) - 4, y: 24, "text-anchor": "end", "font-size": 11 }, fig, "equivalence margin ±2");
+    [-2, -1, 0, 1, 2, 3].forEach(t => { el("line", { x1: X(t), y1: 10, x2: X(t), y2: 160, stroke: t === 0 ? C.c3 : C.c0, "stroke-width": t === 0 ? 2 : 1 }, fig);
+      el("text", { x: X(t), y: 178, "text-anchor": "middle", "font-size": 11 }, fig, t); });
+    el("text", { x: 320, y: 196, "text-anchor": "middle", "font-size": 11 }, fig, "penalty (accuracy points)");
+    D.forEach((x, i) => { const used = i < n, c = el("circle", { cx: X(x), cy: 48 + (i % 4) * 9, r: 5, fill: used ? C.c4 : C.c0, stroke: C.c4, "stroke-width": 1.5 }, fig);
+      hover(c, `seed ${i + 1}: ${x.toFixed(2)} points${used ? "" : " (not used)"}`); });
+    el("line", { x1: X(ci90[0]), y1: 105, x2: X(ci90[1]), y2: 105, stroke: C.c2, "stroke-width": 8 }, fig);
+    el("text", { x: X(ci90[1]) + 8, y: 109, "font-size": 11 }, fig, "90% CI");
+    el("line", { x1: X(ci[0]), y1: 132, x2: X(ci[1]), y2: 132, stroke: C.c4, "stroke-width": 4 }, fig);
+    el("rect", { x: X(m) - 5, y: 126, width: 10, height: 12, fill: C.c4 }, fig);
+    el("text", { x: X(ci[1]) + 8, y: 136, "font-size": 11 }, fig, "mean and 95% CI");
+    const rows = [["Seeds n", n], ["Mean", m.toFixed(3)], ["SD", sd.toFixed(3)], ["SE = SD/√n", se.toFixed(3)], ["t quantile (95%, " + (n - 1) + " df)", t95.toFixed(3)],
+      ["95% CI", `${ci[0].toFixed(2)} to ${ci[1].toFixed(2)}`], ["t = mean / SE", tstat.toFixed(2)], ["p-value", p < 1e-4 ? p.toExponential(1) : p.toFixed(4)],
+      ["Detected (CI excludes 0)?", det ? "yes" : "no"], ["Equivalent at ±2 (90% CI inside)?", eq ? "yes" : "no"]];
+    tab.innerHTML = "<tbody>" + rows.map(r => `<tr><td>${r[0]}</td><td class="num">${r[1]}</td></tr>`).join("") + "</tbody>";
+    document.getElementById("nOut").textContent = n;
+  }
+  nS.addEventListener("input", draw); draw();
+})();
+
+/* ---------- Basics: entropy and power mean ---------- */
+(function () {
+  const fig = document.getElementById("figH");
+  function draw(k) {
+    clear(fig); k = +k;
+    for (let c = 0; c < 10; c++) { const p = c < k ? 1 / k : 0, x = 30 + c * 58;
+      el("rect", { x, y: 80 - p * 70, width: 40, height: Math.max(p * 70, 1), fill: C.c4 }, fig);
+      el("text", { x: x + 20, y: 98, "text-anchor": "middle", "font-size": 10 }, fig, CLASSES[c].split(" ")[0]);
+      if (p) el("text", { x: x + 20, y: 76 - p * 70, "text-anchor": "middle", "font-size": 10 }, fig, (p * 100).toFixed(0) + "%"); }
+    const H = Math.log2(k);
+    document.getElementById("hText").textContent = `Entropy H = −Σ p·log₂ p = log₂ ${k} = ${H.toFixed(2)} bit${H === 1 ? "" : "s"}. 0 bits = fully concentrated; 3.32 bits = spread evenly over the 10 classes. The study used 1, 2, 5 and 10 classes, i.e. 0, 1, 2.32 and 3.32 bits.`;
+  }
+  seg('[aria-label="Number of classes"]', "k", draw); draw(1);
+  const lam = document.getElementById("lam"), fm = document.getElementById("figM");
+  function M(l) { return Math.abs(l) < 1e-9 ? Math.sqrt(1 * 9) : Math.pow(0.5 * Math.pow(1, l) + 0.5 * Math.pow(9, l), 1 / l); }
+  function drawM() {
+    clear(fm);
+    const l = +lam.value, v = M(l), L = 40, R = 620, X = x => L + x / 10 * (R - L);
+    el("line", { x1: L, y1: 60, x2: R, y2: 60, stroke: C.c4, "stroke-width": 2 }, fm);
+    [0, 1, 3, 5, 9, 10].forEach(t => el("text", { x: X(t), y: 80, "text-anchor": "middle", "font-size": 11 }, fm, t));
+    [["A", 1, C.c2], ["B", 9, C.c2], ["mix", v, C.c4]].forEach(([n, x, c]) => { el("rect", { x: X(x) - 7, y: 46, width: 14, height: 28, fill: c }, fm);
+      el("text", { x: X(x), y: 38, "text-anchor": "middle", "font-size": 12, "font-weight": 700 }, fm, n === "mix" ? "mix = " + v.toFixed(2) : n); });
+    document.getElementById("lamOut").textContent = l.toFixed(1);
+    document.getElementById("mText").textContent = `λ = 1 gives the arithmetic mean (5), λ → 0 the geometric mean (3), λ = −1 the harmonic mean (1.8); large λ approaches the harder class, very negative λ the easier one. If a real 50/50 mix scored below every value of this family, that leftover would be the concentration effect.`;
+  }
+  lam.addEventListener("input", drawM); drawM();
 })();
 
 /* ---------- Timeline links open the study they point to ---------- */
