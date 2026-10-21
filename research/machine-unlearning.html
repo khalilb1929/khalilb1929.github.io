@@ -229,9 +229,35 @@
     <svg class="fig" id="figDose" viewBox="0 0 640 240" role="img" aria-label="Share of runs that diverged by number of classes in the forget set"></svg>
     <p class="hint">Runs out of: 100 one-class, 450 two-class, 120 five-class and 10 ten-class sets (implementation A, weight 0.01). A variant that keeps BatchNorm in evaluation mode (C) never diverged or collapsed in this study.</p>
   </div>
+  <details class="study" id="dose-method">
+    <summary><span class="n">?</span><span class="t">How these runs were made, and what “diverged” means</span><span class="s">training recipe, unlearning recipe, the 68 forget sets, the two failure definitions</span></summary>
+    <div class="study-body"><dl>
+      <dt>Data</dt><dd>Fashion-MNIST. 5,000 images (500 per class) are set aside for validation. The 600 images to forget (D_f) are drawn from the rest, and the remaining 54,400 images form the retained set D_r.</dd>
+      <dt>Original model</dt><dd>The small CNN described <a href="#basics">above</a>, trained from scratch on each seed: SGD with momentum 0.9, learning rate 0.05 decreasing along a cosine curve, weight decay 5·10⁻⁴, batches of 128, 15 epochs, no data augmentation. It reaches about 93% test accuracy. All 68 forget sets of a seed start from this same model.</dd>
+      <dt>Unlearning</dt><dd>NegGrad+ with loss α·CE<sub>r</sub> − (1−α)·CE<sub>f</sub> and forget weight 1−α = 0.01. One pass over D_r: 425 steps, each with a batch of 128 retained and 64 forget images (the 600 forget images are reused throughout). SGD, constant learning rate 0.01, momentum 0.9, weight decay 5·10⁻⁴. The gradient is clipped at norm 5 at every step.</dd>
+      <dt>BatchNorm (A vs C)</dt><dd><b>A</b> (the main variant): the retained and forget batches go through the network separately, in training mode, so each BatchNorm layer normalises the forget batch with that batch's own mean and variance and updates its stored statistics with it. <b>C</b> (control): BatchNorm in evaluation mode with the original model's stored statistics, which never change.</dd>
+      <dt>The 68 forget sets</dt><dd>Always 600 images: each class alone (10 sets of 600), every pair of classes (45 sets of 300 + 300), 12 five-class sets (120 per class, each class appears in 6 of them) and one spread set (60 per class). Which images are drawn depends only on the seed and the set, so A and C see exactly the same images in the same order. 68 sets × 10 seeds give the 100 / 450 / 120 / 10 runs per bar.</dd>
+      <dt>Diverged</dt><dd>The forget loss CE<sub>f</sub> exceeded 10 at any step, or the numbers broke down (NaN or infinity). For scale: a model that guesses at random among 10 classes has CE = ln 10 ≈ 2.3. CE = 10 means it gives the true class a probability of about e⁻¹⁰ ≈ 0.005%. The push has run far past “not knowing” and keeps going, because NegGrad+'s forget term has no floor.</dd>
+      <dt>Collapsed</dt><dd>After unlearning, with the model's own stored BatchNorm statistics (“native buffers”): test accuracy of 20% or less, or 80% or more of all test predictions in a single class. As explained in <a href="#trap">the trap</a>, most of these models recover after their statistics are recomputed on D_r.</dd>
+    </dl></div>
+  </details>
 
   <h3>2 · It is not just that some classes are harder</h3>
   <p>A statistical model accounted for the difficulty of each class and for a whole family of ways to combine them (power means of order −3 to 3). Even then, <b>less concentrated sets had a lower early forget loss than their classes predict</b>: −0.246 decade per bit of label entropy (95% CI −0.263 to −0.228, all 10 seeds negative). A decade is a factor of 10. This rules out the combination rules of that family, not every possible interaction between specific pairs of classes.</p>
+  <details class="study" id="identity-method">
+    <summary><span class="n">?</span><span class="t">How “beyond class identity” was tested</span><span class="s">the objection, the early forget loss, the power-mean model, γ and the bootstrap test</span></summary>
+    <div class="study-body"><dl>
+      <dt>The objection</dt><dd>In every study, the classes that diverge when forgotten alone are the same six (1, 2, 4, 5, 6, 7). So maybe some classes are simply hard to forget, and “concentrated” only means “contains a hard class”. A spread set mixes hard and easy classes, which could be enough to calm it down.</dd>
+      <dt>Data</dt><dd>The 68 forget sets of the chart above (one class, pairs, five classes, spread; always 600 images), 10 new seeds (401–410), implementation A, forget weight 0.01, same recipes as above.</dd>
+      <dt>Outcome</dt><dd><b>Early forget loss</b> S: the average of log₁₀ CE<sub>f</sub> over the first 24 steps. Why early: on earlier data, no run had diverged before step 24, so S is measured before any explosion and does not just count explosions. It was chosen before the study, because on those earlier runs it already told apart the runs that would diverge later from those that would not (AUC 0.92: a random diverging run had a higher S than a random stable run 92% of the time).</dd>
+      <dt>Concentration</dt><dd>The label entropy H = log₂(number of classes): 0 bit for one class, 1 for two, 2.32 for five, 3.32 for ten. One bit more means the request is spread over twice as many classes.</dd>
+      <dt>What classes alone predict</dt><dd>Each class c gets an effect x<sub>c</sub>, roughly its early loss when it is forgotten alone. For a mix with class proportions p<sub>c</sub>, the prediction is a <b>power mean</b> M<sub>λ</sub> = (Σ p<sub>c</sub> x<sub>c</sub><sup>λ</sup>)<sup>1/λ</sup>. The order λ says how classes combine: λ = 1 is the plain average (a hard class weighs a lot), λ → 0 the geometric mean (average of the logs), λ = −1 the harmonic mean (an easy class weighs a lot). Rather than guessing the right rule, λ is estimated from the data, anywhere between −3 and 3. Try it in the power-mean widget in <a href="#basics">the basics</a>.</dd>
+      <dt>The model</dt><dd>For each seed, on its 68 sets: S = log₁₀ M<sub>λ</sub>(p; x) + <b>γ·H</b> + noise. The 10 class effects, λ and γ (12 numbers) are fitted by non-linear least squares. If class identity explains everything, γ = 0. If spreading a request helps beyond the classes it contains, γ &lt; 0.</dd>
+      <dt>Test</dt><dd>One γ per seed, so 10 values, and a one-sample t statistic on them. Because λ is estimated, the usual Student table is not reliable here, so the threshold came from a <b>parametric bootstrap</b>: 2,000 fake 10-seed experiments simulated with γ = 0 (fitted classes, fitted λ, heavy-tailed noise), each refitted; the p-value is how often a fake experiment gives a t as extreme as the real one.</dd>
+      <dt>Result</dt><dd>γ = <b>−0.246</b> decade per bit (95% CI −0.263 to −0.228, bootstrap p = 0.001, the smallest this bootstrap can give; all 10 seeds negative; λ estimated between 0.34 and 1.09). From one class to ten (3.32 bits), that is 0.82 decade: the early loss of the spread set is about <b>6.6 times lower</b> than its classes predict.</dd>
+      <dt>Does not show</dt><dd>That no particular pair of classes interacts in a special way (the model cannot represent that), nor anything about divergence or forgetting directly: the outcome is the early loss level, at one weight, for one network. Under the control C (BatchNorm frozen), γ was about zero (−0.004).</dd>
+    </dl></div>
+  </details>
 
   <h3>3 · It is specific to how NegGrad+ forgets</h3>
   <p>With everything else identical, I compared NegGrad+ with the random-label control. The measure is the typical size of the gradients before they are clipped (<code>Ḡ</code>, in decades): how much more it grows for concentrated than for spread requests.</p>
@@ -244,6 +270,19 @@
     <svg class="fig" id="figG" viewBox="0 0 640 210" role="img" aria-label="Concentration shift of gradient size under NegGrad+ and random labels"></svg>
     <p class="hint" id="gText"></p>
   </div>
+  <details class="study" id="gradient-method">
+    <summary><span class="n">?</span><span class="t">How the NegGrad+ vs random-label comparison was made</span><span class="s">the control, why a continuous measure, Ḡ, the paired contrast and the test</span></summary>
+    <div class="study-body"><dl>
+      <dt>The control</dt><dd><b>Random labels (RL)</b>: each image to forget gets a wrong label, drawn among the 9 other classes (fixed per seed and set, balanced across classes), and the model is trained <em>towards</em> it: α·CE<sub>r</sub> + (1−α)·CE(x<sub>f</sub>, wrong label). Unlike NegGrad+, this target has a floor: once the model predicts the wrong label, its loss reaches zero and the push stops. Everything else is identical: same original model, same forget sets, same batches in the same order, same BatchNorm treatment (A), same learning rate and clipping.</dd>
+      <dt>Why a new measure</dt><dd>A previous study used the <b>clipping burden</b> B, the share of steps whose gradient is larger than the clip threshold 5. Under random labels it was stuck at zero (4 clipped steps in 330 runs): it could not see any effect below the threshold. Hence a continuous measure.</dd>
+      <dt>Ḡ</dt><dd>At each of the 425 steps, the size (L2 norm, over all weights) of the gradient of the full loss, measured <em>before</em> clipping. Ḡ is the average of log₁₀ of these sizes. A difference of 1 in Ḡ is a factor 10 in the typical gradient size; 0.1 is about +26%. It measures how hard the optimiser is being pushed, not instability itself.</dd>
+      <dt>Contrast, per seed</dt><dd>For each method: shift = (mean Ḡ over the 10 one-class sets) − (Ḡ of the spread set). The main number θ = shift under NegGrad+ − shift under RL. Each seed (101–110, new models) gives one θ, so 10 values.</dd>
+      <dt>Test</dt><dd>Two-sided one-sample t test on the 10 values at weight 0.01 (main). The weights 0.001 and 0.05 and the RL shift alone are secondary, with a Holm correction. Before any run, simulations checked that the tests raise false alarms at about the nominal 5% rate (0.044–0.059).</dd>
+      <dt>Result (0.01)</dt><dd>Concentration raised Ḡ by <b>0.705</b> decade under NegGrad+ (gradients about 5 times larger) and by <b>0.053</b> under RL (about 13% larger). θ = 0.652 (95% CI 0.607–0.696, p &lt; 10⁻¹⁰), positive in all 10 seeds.</dd>
+      <dt>Other weights</dt><dd>At 0.001, θ = −0.015: the forget push is too weak for either method to matter. At 0.05, θ = 2.644 (NegGrad+ gradients hundreds of times larger), while the RL shift became negative. On concentrated sets NegGrad+ lost 1.3, 46.8 and 82.9 test-accuracy points at the three weights; RL only 1.0, 2.0 and 2.9.</dd>
+      <dt>Does not show</dt><dd>That Ḡ is an instability measure (its sign depends on the weight), that random labels are unstable (their small shift never came with a divergence), or which part of the network causes the difference.</dd>
+    </dl></div>
+  </details>
 </section>
 
 <section id="fixes">
@@ -743,7 +782,7 @@ seg('[aria-label="Evaluation"]', "ev", drawTrap); drawTrap("nat");
 
 /* ---------- Open / close all studies (also #open-all in the URL) ---------- */
 (function () {
-  const b = document.querySelector("[data-toggle-all]"), all = () => document.querySelectorAll("details.study");
+  const b = document.querySelector("[data-toggle-all]"), all = () => document.querySelectorAll("#studies details.study");
   b.addEventListener("click", () => { const open = b.textContent === "Open all"; all().forEach(d => d.open = open); b.textContent = open ? "Close all" : "Open all"; });
   if (location.hash === "#open-all") b.click();
 })();
@@ -894,7 +933,7 @@ openFromHash();
 /* ---------- Study filters ---------- */
 (function () {
   let role = "all", stat = "all";
-  const studies = document.querySelectorAll("details.study");
+  const studies = document.querySelectorAll("#studies details.study");
   function apply() { studies.forEach(d => { d.hidden = !((role === "all" || d.dataset.r === role) && (stat === "all" || d.dataset.s === stat)); }); }
   function wire(sel, attr, set) { const b = document.querySelectorAll(sel + " button");
     b.forEach(x => x.addEventListener("click", () => { b.forEach(y => y.setAttribute("aria-pressed", y === x ? "true" : "false")); set(x.dataset[attr]); apply(); })); }
