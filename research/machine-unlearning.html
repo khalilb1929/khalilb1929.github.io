@@ -25,8 +25,11 @@
     <li><a href="#findings">3 · What I found</a></li>
     <li><a href="#fixes">4 · Can it be avoided?</a></li>
     <li><a href="#trap">5 · A measurement trap</a></li>
-    <li><a href="#method">6 · How it was done</a></li>
-    <li><a href="#lessons">7 · Lessons and limits</a></li>
+    <li><a href="#studies">6 · Every study, in order</a></li>
+    <li><a href="#defs">7 · Definitions</a></li>
+    <li><a href="#method">8 · How it was done</a></li>
+    <li><a href="#checked">9 · How it was checked</a></li>
+    <li><a href="#lessons">10 · Lessons and limits</a></li>
   </ul>
 </div></header>
 
@@ -138,6 +141,177 @@
   <p>A real loss remains (about 74% vs 93% for the original model), but much smaller than it first appeared. How an unlearned model is evaluated can change the conclusion.</p>
 </section>
 
+<section id="studies">
+  <h2>Every study, in order</h2>
+  <p>The project is a chain of 13 studies. Each one answered a question left open by the previous one. Open a study to see its question, its design, what came out and what it does <em>not</em> show. Filter by role or by status.</p>
+  <div class="chips" role="group" aria-label="Filter studies by role">
+    <button type="button" data-f="all" aria-pressed="true">All 13</button>
+    <button type="button" data-f="problem" aria-pressed="false">Is there a problem?</button>
+    <button type="button" data-f="why" aria-pressed="false">Why does it happen?</button>
+    <button type="button" data-f="fix" aria-pressed="false">Can it be fixed?</button>
+    <button type="button" data-f="beyond" aria-pressed="false">Beyond Fashion-MNIST</button>
+  </div>
+  <div class="chips" role="group" aria-label="Filter studies by status">
+    <button type="button" data-g="all" aria-pressed="true">Any status</button>
+    <button type="button" data-g="post" aria-pressed="false">Post hoc</button>
+    <button type="button" data-g="pre" aria-pressed="false">Pre-specified</button>
+    <button type="button" data-g="expl" aria-pressed="false">Pre-specified but exploratory</button>
+  </div>
+  <p><button type="button" class="btn" data-toggle-all>Open all</button></p>
+  <p class="timeline-note">Post hoc: the analysis was decided after seeing data. Pre-specified: question, test and wording fixed and committed before the run. Exploratory: pre-specified, but with fewer seeds than the protocol itself requires for a firm claim.</p>
+
+  <details class="study" data-r="problem" data-s="pre">
+    <summary><span class="n">01</span><span class="t">The original study (v3): a success for the wrong reason</span><span class="badge">criterion fixed in advance · 5 seeds</span><span class="s">Fashion-MNIST, CNN, concentrated vs random forget sets</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>Does NegGrad+ “forget better” when the 600 examples to forget come from a single class, compared with a random set of the same size? The directional criterion was written down before the run.</dd>
+      <dt>Design</dt><dd>A small BatchNorm CNN trained on 55,000 Fashion-MNIST images; fine-tuning and NegGrad+ compared with a model retrained without the forget set, over 5 seeds, with hyperparameters tuned beforehand.</dd>
+      <dt>Result</dt><dd>The criterion was met, but only through runs that collapsed: 26 of 55 runs ended at ≤ 20% test accuracy, all with concentrated forget sets.</dd>
+      <dt>Does not show</dt><dd>Any forgetting. A model that recognises nothing “forgets” trivially. Accuracy was measured with the BatchNorm statistics left by unlearning, and no recalibrated evaluation exists for this study, so we cannot tell how much of the collapse was in the weights.</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="why" data-s="post">
+    <summary><span class="n">02</span><span class="t">Diagnostics 2–3: is it the BatchNorm treatment?</span><span class="badge">post hoc · 5 seeds</span><span class="s">Which way of handling BatchNorm avoids the blow-up?</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>The concentrated runs looked like an optimisation blow-up. Does it depend on how BatchNorm normalises the batch to forget?</dd>
+      <dt>Design</dt><dd>Same model, weight 1−α = 0.01, 30 concentrated tasks. Implementation A (separate training-mode passes, the original) compared with B (retained and forgotten images in one batch) and C (BatchNorm frozen in evaluation mode). A third diagnostic tested E1 (forget batch normalised with running statistics of the retained data) on one class. Reading criteria were dated before each computation, but the classes were chosen after v3.</dd>
+      <dt>Result</dt><dd>A diverged in 29 of 30 tasks; B and C in 0 of 30, with test accuracy within about 1.5 points of the original model. E1 did not diverge on class “Trouser” (0/5 seeds; 92.4–93.3% test accuracy vs 93.0–93.4% for the original model).</dd>
+      <dt>Does not show</dt><dd>That BatchNorm is <em>the</em> cause: each variant changes several things, the weight was fixed, and later studies found that these variants fail elsewhere (studies 05 and 06).</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="problem" data-s="expl">
+    <summary><span class="n">03</span><span class="t">Replication v1.3: does it hold with new seeds, and on CIFAR-10?</span><span class="badge">pre-specified, exploratory · 5 + 3 seeds</span><span class="s">A vs C on all 10 classes and 3 weights</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>With newly derived seeds, draws and models, are concentrated runs more unstable than spread ones, under A and under C?</dd>
+      <dt>Design</dt><dd>Fashion-MNIST (CNN, 5 seeds) and CIFAR-10 (ResNet-18, 3 seeds); 10 classes × 3 weights (0.001, 0.01, 0.05). Main statistic: the share of concentrated runs more unstable than the paired spread run (a numerical failure counts as more unstable; otherwise the higher mean forget loss). Protocol committed before the run, but the analysis code was not.</dd>
+      <dt>Result</dt><dd>Fashion-MNIST: share 0.86 under A (Holm p = 1.7·10⁻⁵); difference A − C 0.37 (Holm p = 1.5·10⁻⁴). At 0.01, A diverged in 30/50 concentrated runs and collapsed in 24/50; C in 0. CIFAR-10: the share was 1 in all 3 seeds (test not computable), A − C 0.43 (Holm p = 0.0039); A diverged in 60 runs and never collapsed, which shows that divergence and collapse are different things. Spread runs never diverged.</dd>
+      <dt>Does not show</dt><dd>That concentration itself matters: the six classes that diverged were exactly those that had collapsed in v3, so class identity and concentration were still confounded. With 5 and 3 seeds the protocol classifies everything as exploratory.</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="why" data-s="pre">
+    <summary><span class="n">04</span><span class="t">NegGrad+ vs random labels, first try: the clipping burden</span><span class="badge">pre-specified · 10 seeds (5 reused)</span><span class="s">Is the effect specific to NegGrad+?</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>Is the concentration effect specific to NegGrad+'s unbounded “push up”, or does it also appear with a bounded objective?</dd>
+      <dt>Design</dt><dd>Both objectives share the original model, forget sets, batch streams, forward passes, BatchNorm treatment and optimiser. The control (RL) teaches labels drawn once among the other classes. Measure: the share of steps whose gradient had to be clipped (threshold 5). Contrast: concentration effect under NG minus under RL, per seed.</dd>
+      <dt>Result</dt><dd>At 0.01 the difference was 0.304 (95% CI 0.289–0.318, p &lt; 10⁻¹⁰). But RL sat at the floor: 4 clipped steps in 330 runs.</dd>
+      <dt>Does not show</dt><dd>That RL is unaffected: a measure stuck at zero cannot see small effects. This motivated a continuous measure (study 08).</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="why" data-s="expl">
+    <summary><span class="n">05</span><span class="t">BatchNorm study v1.0: which part of BatchNorm matters?</span><span class="badge">pre-specified, exploratory · 5 seeds</span><span class="s">A vs E1 vs E1D, 600 runs</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>Does the instability come from the gradient flowing through the batch statistics, from the statistics themselves, or from neither?</dd>
+      <dt>Design</dt><dd>A (own statistics, gradient through them), E1D (own statistics but detached, no buffer update) and E1 (running statistics of retained data). 150 concentrated and 50 spread runs per weight; 600 runs, no numerical failure. Shares the split, classes and weights of v1.3, so it is a follow-up, not an independent replication. Two engineering amendments were committed before the main study.</dd>
+      <dt>Result</dt><dd>Divergences on concentrated sets at 0.001 / 0.01 / 0.05: A 12 / 90 / 150, E1D 12 / 89 / 121, E1 0 / 60 / 150 (and E1 diverged in 47/50 spread runs at 0.05). On the optimised forget loss, A was above E1D in 82% of concentrated runs (Holm p = 3.7·10⁻⁵; +0.83 decade), more than on spread sets (+0.33, Holm p = 4.0·10⁻⁴), with a gap growing with the weight (+0.01, +0.75, +1.73 decade).</dd>
+      <dt>Does not show</dt><dd>A single mechanism: the results fit a weight-dependent contribution of the gradient through the batch statistics, but E1D and E1 still diverged widely, so that is not the whole story.</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="beyond" data-s="expl">
+    <summary><span class="n">06</span><span class="t">Control of C on CIFAR-10: does freezing BatchNorm cost accuracy?</span><span class="badge">pre-specified, exploratory · 3 seeds</span><span class="s">ResNet-18, 33 cells per weight</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>C avoided divergence on CIFAR-10. Does it pay for it with accuracy, and is that loss real or an evaluation artefact?</dd>
+      <dt>Design</dt><dd>C and E1 on 33 condition × weight cells at 0.001 and 0.01, compared with fine-tuning; evaluation with native and with exactly recalibrated BatchNorm statistics.</dd>
+      <dt>Result</dt><dd>C never diverged (0/33 at both weights) but was 1.6–2.9 points below fine-tuning with native statistics; after exact recalibration it was no longer below fine-tuning. E1 diverged in 31/33 cells at 0.01.</dd>
+      <dt>Does not show</dt><dd>That C is a remedy: it changes the source of the statistics and the numerical trajectory together, and was tested on one architecture with 3 seeds.</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="problem" data-s="expl">
+    <summary><span class="n">07</span><span class="t">Concentration beyond class identity: 68 mixes</span><span class="badge">pre-specified, exploratory · 10 new seeds</span><span class="s">The study that separates concentration from class difficulty</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>Is the effect due to concentration, or just to some classes being hard?</dd>
+      <dt>Design</dt><dd>Seeds 401–410, each with its own original model, 68 compositions per seed at n = 600 and weight 0.01: the 10 one-class sets, all 45 two-class sets, 12 five-class sets and the spread set. Outcome: the early forget loss (mean log₁₀ forget loss over steps 0–23), chosen beforehand because it separated later-diverging runs on earlier data (AUC 0.92). Model: per seed, S = log₁₀ M<sub>λ</sub>(class proportions; class effects) + γ·H + noise, where M<sub>λ</sub> is a power mean of order λ ∈ [−3, 3] and H the label entropy in bits. Test on γ over seeds, with a threshold calibrated by parametric bootstrap (2,000 draws).</dd>
+      <dt>Result</dt><dd>γ = −0.246 decade per bit (95% CI −0.263 to −0.228, p = 0.001, all 10 seeds negative; estimated λ between 0.34 and 1.09). Less concentrated sets had a lower early loss than their classes predict, for every combination rule of that family. Under A, 62/100 one-class and 67/450 two-class runs diverged, none with 5 or 10 classes. Under C (secondary), γ = −0.004, equivalent to zero at ±0.075 for the estimated λ but positive with λ fixed at 0.</dd>
+      <dt>Does not show</dt><dd>That no pair of classes interacts in some special way (the model cannot represent that), nor anything about divergence or forgetting directly: the outcome is the early loss level, at one weight and for one model.</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="why" data-s="pre">
+    <summary><span class="n">08</span><span class="t">NegGrad+ vs random labels, done properly: a continuous measure</span><span class="badge">pre-specified · 10 new seeds</span><span class="s">Ḡ, the mean log size of the gradients before clipping</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>Same as study 04, with a measure that cannot get stuck at zero.</dd>
+      <dt>Design</dt><dd>Seeds 101–110, new models, nothing reused. Ḡ = mean over steps of log₁₀ of the gradient norm before clipping. The analysis was calibrated by Monte Carlo before any run (false-positive rate of the main test 0.044–0.059; Holm family 0.036–0.044). One amendment, on a unit-test tolerance, followed a pilot stop that came before any unlearning run. 782 units; replays bitwise identical.</dd>
+      <dt>Result</dt><dd>At 0.01: concentration raised Ḡ by 0.705 decade under NegGrad+ and by 0.053 under random labels; difference 0.652 (95% CI 0.607–0.696, p &lt; 10⁻¹⁰, all 10 seeds). At 0.001 the difference was slightly negative (−0.015); at 0.05 it was 2.644, with the random-label shift negative. Concentrated NG runs lost 1.3, 46.8 and 82.9 test-accuracy points at the three weights, RL only 1.0, 2.0 and 2.9.</dd>
+      <dt>Does not show</dt><dd>That Ḡ measures instability (its direction depends on the weight), nor that random labels are unstable: their small shift never came with divergence.</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="beyond" data-s="expl">
+    <summary><span class="n">09</span><span class="t">Tiny ImageNet: is the signal still there on harder data?</span><span class="badge">pre-specified, exploratory · 5 new seeds</span><span class="s">200 classes, ResNet-18, one weight</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>Does the gradient-size signal of study 08 appear outside Fashion-MNIST?</dd>
+      <dt>Design</dt><dd>Ten target classes fixed before downloading the archive; for each, a concentrated set of 50 images paired with a spread set (one image of the class and one from each of 49 others). Forget batch of 25, so each forgotten image is seen about 351–352 times in 703 steps; only weight 0.01. An exploratory membership-inference check used the score −loss, with official validation images as non-members.</dd>
+      <dt>Result</dt><dd>Contrast θ = 0.0288 decade (95% CI 0.0258–0.0319, p = 1.3·10⁻⁵), positive in all seeds and classes; NG shift 0.0232, random-label shift −0.0056 (detected, but inside the ±0.02 equivalence margin). The divergence criterion was saturated (50/50 in both groups), so it could not separate compositions. Membership-inference AUC: 0.732 original, 0.670 fine-tuning, 0.590 random labels, 0.388 NegGrad+.</dd>
+      <dt>Does not show</dt><dd>Erasure: an AUC below 0.5 means the forgotten images now have a <em>higher</em> loss than unseen ones, an inversion an attacker could exploit. Five seeds, ten classes and one weight do not make a powered replication, and the archive's usage conditions were not verified with its host.</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="why" data-s="expl">
+    <summary><span class="n">10</span><span class="t">The source of the statistics alone (v1.2)</span><span class="badge">pre-specified, exploratory · 10 new seeds</span><span class="s">E1D vs RD64: only where the statistics come from changes</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>With the gradient path held fixed, does it matter whether the batch to forget is normalised with its <em>own</em> statistics or with those of the concurrent retained batch?</dd>
+      <dt>Design</dt><dd>Seeds 411–420, the 68 compositions of study 07. E1D and RD64 both detach the statistics; they differ only in their source. Outcome: capped early loss burden over steps 0–19. Main contrast θ: how much RD64 − E1D changes for mixed sets relative to one-class sets, on the training pass (H1) then on a reference pass (H2). A calibration simulation run before the study showed that a test meant to isolate concentration (Δγ) gave 8.2–19.3% false positives under combination rules outside the family, so it was withdrawn and reported only descriptively. One amendment (a unit-check tolerance) after a pilot stop that came before any task.</dd>
+      <dt>Result</dt><dd>θ = 0.670 decade (95% CI 0.632–0.708) on the training pass and 0.210 (0.187–0.232) on the reference pass, positive in all seeds. Mostly because RD64 lowered the early loss of one-class sets (by 0.79 decade; 0.31 for pairs, 0.06 for five classes, 0 for the spread set). No RD64 run diverged or collapsed (0/680), against 61/100 one-class and 53/450 two-class E1D divergences.</dd>
+      <dt>Does not show</dt><dd>A concentration-specific effect or a mechanism: the comparison does not separate the source of the statistics from the mismatch between the batch and the statistics used.</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="fix" data-s="pre">
+    <summary><span class="n">11</span><span class="t">A frozen alternative target (CF)</span><span class="badge">pre-specified · 12 new seeds</span><span class="s">Replace the unbounded push with a bounded target</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>If NegGrad+ fails because its push is unbounded, does descending towards a fixed, sensible target avoid the concentration penalty?</dd>
+      <dt>Design</dt><dd>For each forgotten (x, y), the target is the original model's softmax over the classes other than y (true class masked before the softmax). NG at weights 0.01 and 0.05, RL and CF at 0.01, 0.05 and 0.2; seeds 421–432. Outcome U: accuracy loss on the retained data, after recalibrating BatchNorm on that data. Two main tests with Holm correction. The draft planned 10 seeds; the power simulation gave 0.72 (below 0.80), so 12 seeds were fixed before the freeze (0.81). One amendment: a unit test compared logits computed with different batch sizes, which differ under the A100's TF32 arithmetic. 1,467 units, replays bitwise identical.</dd>
+      <dt>Result</dt><dd>Interaction NG vs CF: 16.2 points (95% CI 14.1–18.4, Holm p = 7·10⁻⁹), all 12 seeds. RL vs CF: −0.02 (no difference detected; no equivalence test planned). CF's own penalty 0.25 point, detected but inside ±2 points. NG collapsed in 70/120 concentrated runs at 0.01 and 117/120 at 0.05; RL and CF never.</dd>
+      <dt>Does not show</dt><dd>Successful forgetting: the force check rested on a nearly null reference (NG force 0.019 decade, CF 0.051), and on concentrated sets CF left the accuracy on the forgotten images at 96.7–97.4% (fine-tuning 98.2%), even though it fitted its targets during training.</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="fix" data-s="pre">
+    <summary><span class="n">12</span><span class="t">A bundled BatchNorm fix (RD64)</span><span class="badge">pre-specified · 14 new seeds</span><span class="s">Normalise the batch to forget with retained-batch statistics</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>Does the RD64 treatment, which never diverged in study 10, reduce the concentration penalty on retained utility?</dd>
+      <dt>Design</dt><dd>At each BatchNorm layer, the batch to forget uses the mean and variance of the first 64 rows of the retained batch of the same step, detached, without updating the stored statistics. So three things change at once: the source of the statistics, the gradient path and the buffer updates. Seeds 433–446. Single test on I = penalty(A) − penalty(RD64). Power planned for a negative correlation between the two penalties: 12 seeds gave 0.737, 14 gave 0.818–0.872. No amendment.</dd>
+      <dt>Result</dt><dd>I = 13.7 points (95% CI 12.6–14.7, p = 4·10⁻¹³), positive in all 14 seeds (10.7–17.1). NG-A: 84/140 divergences and 75/140 collapses; NG-RD: 0 and 0. Accuracy on the concentrated forget sets (recalibrated): 80.2% NG-A, 96.7% NG-RD, 98.5% fine-tuning, 93.1% retrained.</dd>
+      <dt>Does not show</dt><dd>Which of the three changes matters, or forgetting: NG-RD's forgetting strength was about 0.03 decade, and its predictions on the forgotten images barely moved away from fine-tuning (1.7 points).</dd>
+    </dl></div>
+  </details>
+
+  <details class="study" data-r="fix" data-s="pre">
+    <summary><span class="n">13</span><span class="t">Per-class tuning: does a good setting suffice?</span><span class="badge">pre-specified · 3 + 12 new seeds</span><span class="s">20 settings per class, chosen by a fixed rule</span></summary>
+    <div class="study-body"><dl>
+      <dt>Question</dt><dd>Maybe NegGrad+ was simply badly tuned for concentrated requests. Does the penalty survive when the learning rate and the forget weight are chosen separately for each class?</dd>
+      <dt>Design</dt><dd>Tuning seeds 447–449: grid of 4 learning rates (0.001–0.03) × 5 weights (0.001–0.05). A setting is <em>stable</em> if no run failed, diverged or collapsed, and <em>feasible</em> if it also reaches the forgetting strength of the retrained model. Rule: the feasible setting with the best validation accuracy, else the strongest stable one; it never sees test data or evaluation seeds, and the analysis recomputed it identically. Evaluation seeds 450–461 (12, fixed by power simulation): chosen setting vs the default 0.01/0.01. Main test plus a ±2-point equivalence test. Ran in two Colab sessions (A100 40 GB, then 80 GB).</dd>
+      <dt>Result</dt><dd>Penalty with tuning 1.07 points (95% CI 0.88–1.27), equivalent to zero within ±2; with the default setting 14.2. Divergences on concentrated sets 2/120 vs 71/120. But only 3 of 10 classes had a feasible setting; spread requests were stable under all 20 settings, concentrated ones under 1 to 16.</dd>
+      <dt>Does not show</dt><dd>An equal-strength comparison: for 7 classes the chosen setting acted less than the retrained model, and on the evaluation seeds the retrained strength was reached in only 20% of concentrated runs (67% of spread runs).</dd>
+    </dl></div>
+  </details>
+</section>
+
+<section id="defs">
+  <h2>Definitions used everywhere</h2>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><b>A</b></td><td>Original implementation: retained and forgotten batches go through separate training-mode passes, so a concentrated forget batch is normalised by its own one-class statistics, with the gradient flowing through them and the stored statistics updated.</td></tr>
+      <tr><td><b>B</b></td><td>Retained and forgotten images concatenated into one batch.</td></tr>
+      <tr><td><b>C</b></td><td>All BatchNorm layers frozen in evaluation mode with the original model's statistics.</td></tr>
+      <tr><td><b>E1</b></td><td>Forget batch normalised with running statistics updated by retained batches only.</td></tr>
+      <tr><td><b>E1D</b></td><td>Own statistics, like A, but detached (no gradient) and without updating the stored statistics.</td></tr>
+      <tr><td><b>RD64</b></td><td>Statistics of the first 64 rows of the concurrent retained batch, detached, without updating the stored statistics.</td></tr>
+      <tr><td>Divergence</td><td>Forget loss above 10 at some step, or a numerical failure (NegGrad+ only).</td></tr>
+      <tr><td>Collapse</td><td>Test accuracy ≤ 20%, or one class receiving ≥ 80% of the predictions, measured with the statistics left by unlearning.</td></tr>
+      <tr><td>U, penalty</td><td>U: accuracy lost on the retained data, with the original and unlearned models both recalibrated on that data. Penalty: mean U over the 10 concentrated sets minus U of the spread set, per seed.</td></tr>
+      <tr><td>Forgetting strength E</td><td>Mean drop, in decades, of the probability of the true class on the forgotten images, relative to the original model. A change of prediction, not proof of erasure.</td></tr>
+      <tr><td>Seed</td><td>One complete repetition with its own model; the unit of every statistical test.</td></tr>
+      <tr><td>Holm, TOST, power, calibration</td><td>Correction for several tests; equivalence test (the 90% interval must sit inside the margin); probability of detecting a real effect, used to choose the number of seeds; simulation checking that a test gives about 5% false positives.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
 <section id="method">
   <h2>How it was done</h2>
   <p>It began with an unexpected failure, continued with exploratory diagnostics, and then moved to studies whose plan was fixed before any result was seen:</p>
@@ -152,6 +326,20 @@
     <li><b>Study and frozen analysis</b>: run on a cloud GPU (A100), analysed exactly as written.</li>
   </ul>
   <p>Each seed trains a new model, and the statistics treat one seed as one data point. The studies share some data, so they are not fully independent replications, and the plans live in a private repository rather than a public registry.</p>
+  <h3>When something went wrong</h3>
+  <p>Three times (studies 08, 10 and 11) a pilot stopped on a blocking unit test before any unlearning run; in the last two the tolerance was too strict for the A100's reduced-precision (TF32) arithmetic. Each time the fix was written as a dated amendment, committed, and the pilot re-run; no result had been looked at. The notebooks also stop on their own if, for example, the code fingerprint differs from the frozen one, or if a replayed run is not bit-for-bit identical.</p>
+</section>
+
+<section id="checked">
+  <h2>How the results were checked</h2>
+  <p>Before writing anything up, I audited the four most recent studies end to end:</p>
+  <ul class="list">
+    <li><b>Code</b>: the code executed on the GPU had the same fingerprint as the frozen, committed notebook, in all four studies; no blocking check failed.</li>
+    <li><b>Analyses</b>: six frozen analyses were re-run from the raw per-run tables and reproduced their committed outputs exactly.</li>
+    <li><b>Numbers</b>: 52 key numbers quoted in the write-up were recomputed independently from the raw tables, without the analysis scripts; all matched up to rounding, and the tuning rule recomputed from scratch chose the same settings.</li>
+    <li><b>One correction</b>: the audit showed that most “collapses” disappeared after recomputing BatchNorm statistics (section 5), so the wording of the write-up was corrected.</li>
+    <li><b>Not checkable</b>: the raw Tiny ImageNet tables are not in the repository, and the original study has no recalibrated evaluation.</li>
+  </ul>
 </section>
 
 <section id="lessons">
@@ -401,6 +589,24 @@ function drawTrap(ev) {
     : "Same runs, same weights, statistics recomputed on the remaining data: only 0, 1 and 4 of them stay at or below 20%.";
 }
 seg('[aria-label="Evaluation"]', "ev", drawTrap); drawTrap("nat");
+
+/* ---------- Open / close all studies (also #open-all in the URL) ---------- */
+(function () {
+  const b = document.querySelector("[data-toggle-all]"), all = () => document.querySelectorAll("details.study");
+  b.addEventListener("click", () => { const open = b.textContent === "Open all"; all().forEach(d => d.open = open); b.textContent = open ? "Close all" : "Open all"; });
+  if (location.hash === "#open-all") b.click();
+})();
+
+/* ---------- Study filters ---------- */
+(function () {
+  let role = "all", stat = "all";
+  const studies = document.querySelectorAll("details.study");
+  function apply() { studies.forEach(d => { d.hidden = !((role === "all" || d.dataset.r === role) && (stat === "all" || d.dataset.s === stat)); }); }
+  function wire(sel, attr, set) { const b = document.querySelectorAll(sel + " button");
+    b.forEach(x => x.addEventListener("click", () => { b.forEach(y => y.setAttribute("aria-pressed", y === x ? "true" : "false")); set(x.dataset[attr]); apply(); })); }
+  wire('[aria-label="Filter studies by role"]', "f", v => role = v);
+  wire('[aria-label="Filter studies by status"]', "g", v => stat = v);
+})();
 
 /* ---------- 8. Workflow ---------- */
 (function () {

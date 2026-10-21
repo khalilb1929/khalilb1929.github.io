@@ -116,5 +116,28 @@ ol.steps li { margin: 6px 0; }
 .stat b { display: block; font: 700 28px "IBM Plex Mono", monospace; }
 .stat span { font-size: 13px; opacity: .85; }
 
+/* Parcours étude par étude */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 14px; }
+.chips button { font: 600 13px "IBM Plex Mono", monospace; border: 2px solid var(--c4); background: var(--c0); padding: 2px 10px; cursor: pointer; }
+.chips button[aria-pressed="true"] { background: var(--c4); color: var(--c0); }
+details.study { background: var(--c0); border: 3px solid var(--c4); margin: 0 0 12px; }
+details.study[hidden] { display: none; }
+details.study > summary { list-style: none; cursor: pointer; padding: 10px 14px; display: grid; grid-template-columns: 2.4em 1fr auto; gap: 4px 12px; align-items: baseline; }
+details.study > summary::-webkit-details-marker { display: none; }
+details.study > summary .n { font: 700 17px "IBM Plex Mono", monospace; }
+details.study > summary .t { font-weight: 700; }
+details.study > summary .s { font-size: 12px; color: var(--c3); grid-column: 2 / -1; }
+details.study > summary .badge { font-size: 11.5px; border: 2px solid var(--c4); padding: 0 6px; white-space: nowrap; }
+details.study[open] > summary { background: var(--c4); color: var(--c0); }
+details.study[open] > summary .s { color: var(--c1); }
+details.study[open] > summary .badge { border-color: var(--c0); }
+details.study > summary:focus-visible { outline: 3px dashed var(--c4); outline-offset: 2px; }
+.study-body { padding: 4px 16px 12px; font-size: 15px; }
+.study-body dl { margin: 8px 0; display: grid; grid-template-columns: 8.5em 1fr; gap: 6px 12px; }
+.study-body dt { font-weight: 700; }
+.study-body dd { margin: 0; }
+@media (max-width: 600px) { .study-body dl { grid-template-columns: 1fr; } .study-body dt { margin-top: 6px; } details.study > summary { grid-template-columns: 2em 1fr; } details.study > summary .badge { grid-column: 2; justify-self: start; } }
+.timeline-note { font-size: 13px; color: var(--c3); }
+
 footer { padding: 40px 0 60px; font-size: 13px; color: var(--c3); }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; animation: none !important; } }

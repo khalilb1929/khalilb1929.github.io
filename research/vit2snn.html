@@ -26,7 +26,8 @@
     <li><a href="#training">4 · Two-phase training</a></li>
     <li><a href="#align">5 · How well did it copy?</a></li>
     <li><a href="#results">6 · Results</a></li>
-    <li><a href="#limits">7 · Limits</a></li>
+    <li><a href="#journey">7 · The whole project, step by step</a></li>
+    <li><a href="#limits">8 · Limits</a></li>
   </ul>
 </div></header>
 
@@ -115,6 +116,105 @@
     <div class="stat"><b>70.2%</b><span>best student, 10-way top-1 (phase 1 + 12 fine-tuning epochs, mean of 3 seeds)</span></div>
     <div class="stat"><b>7.0–7.5%</b><span>neurons firing per time step with phase 1, vs 9.0–9.3% without</span></div>
   </div>
+</section>
+
+<section id="journey">
+  <h2>The whole project, step by step</h2>
+  <p>Open each step to see exactly what was done and what came out.</p>
+  <p><button type="button" class="btn" data-toggle-all>Open all</button></p>
+
+  <details class="study">
+    <summary><span class="n">01</span><span class="t">Building the pipeline</span><span class="badge">code</span><span class="s">One script for the student, both phases and the profiling</span></summary>
+    <div class="study-body"><dl>
+      <dt>What</dt><dd>A single PyTorch script (<code>vit2snn_distill.py</code>) builds the spiking student from the timm teacher <code>vit_tiny_patch16_224.augreg_in21k_ft_in1k</code>, runs phase 1 and phase 2, and profiles firing rates and operations with forward hooks. Two attention variants are implemented: Spikformer's SSA (used everywhere) and a spike-driven variant, implemented but never run.</dd>
+      <dt>Neurons</dt><dd>Multi-step LIF, τ = 2, threshold 1, soft reset, arctangent surrogate gradient (α = 2); the attention output neuron has threshold 0.5 and a fixed scale 0.125.</dd>
+      <dt>Check</dt><dd>A 15-second smoke test on random images, without downloading weights, runs the whole pipeline end to end.</dd>
+    </dl></div>
+  </details>
+
+  <details class="study">
+    <summary><span class="n">02</span><span class="t">Training settings</span><span class="badge">hyperparameters</span><span class="s">Everything ran on a 16 GB Apple M2 (MPS backend)</span></summary>
+    <div class="study-body">
+      <div class="scroll"><table class="data">
+        <tbody>
+          <tr><td>Data</td><td>Imagenette (320 px), 224×224 crops; labels mapped to their ImageNet-1k indices</td></tr>
+          <tr><td>Batch</td><td>16, gradient accumulation 2 (effective 32)</td></tr>
+          <tr><td>Optimiser</td><td>AdamW, cosine schedule with 5% warm-up, weight decay 0.05, gradient clipping 1.0</td></tr>
+          <tr><td>Phase 1</td><td>2 epochs per stage (13 stages), learning rate 10⁻³, MSE on hidden states</td></tr>
+          <tr><td>Phase 2</td><td>5 or 12 epochs, learning rate 10⁻⁴, 0.3 × cross-entropy (label smoothing 0.1) + 0.7 × τ²·KL with τ = 4, backpropagation through the 4 steps</td></tr>
+          <tr><td>Software</td><td>Python 3.9.6, PyTorch 2.8.0, timm 1.0.30</td></tr>
+          <tr><td>Memory (measured)</td><td>about 1.2 GiB peak in phase 1 and 4.7 GiB in phase 2</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </details>
+
+  <details class="study">
+    <summary><span class="n">03</span><span class="t">Preliminary run: phase 1 stage by stage</span><span class="badge">1 seed</span><span class="s">The error per stage and the time it took</span></summary>
+    <div class="study-body">
+      <p>Validation MSE between the student and the teacher after each stage, and wall-clock time per stage (2 epochs + validation). Time grows because each stage re-runs the frozen prefix. The run was interrupted during stage 6 and resumed from the stage-5 checkpoint.</p>
+      <div class="scroll"><table class="data">
+        <thead><tr><th>Stage</th><th class="num">0</th><th class="num">1</th><th class="num">2</th><th class="num">3</th><th class="num">4</th><th class="num">5</th><th class="num">6</th><th class="num">7</th><th class="num">8</th><th class="num">9</th><th class="num">10</th><th class="num">11</th><th class="num">12</th></tr></thead>
+        <tbody>
+          <tr><td>Val. MSE</td><td class="num">0.148</td><td class="num">0.349</td><td class="num">0.356</td><td class="num">0.318</td><td class="num">0.337</td><td class="num">0.313</td><td class="num">0.401</td><td class="num">0.480</td><td class="num">22.06</td><td class="num">21.01</td><td class="num">20.01</td><td class="num">19.10</td><td class="num">18.25</td></tr>
+          <tr><td>Time (s)</td><td class="num">46</td><td class="num">171</td><td class="num">236</td><td class="num">308</td><td class="num">357</td><td class="num">417</td><td class="num">483</td><td class="num">537</td><td class="num">620</td><td class="num">692</td><td class="num">786</td><td class="num">891</td><td class="num">1721</td></tr>
+        </tbody>
+      </table></div>
+      <p>Phase 1 took about 2 h in this run. After phase 1 alone the student is near chance: 0.64% on the 1000-way ImageNet head, 17.48% on the 10 classes.</p>
+    </div>
+  </details>
+
+  <details class="study">
+    <summary><span class="n">04</span><span class="t">Preliminary results and two ablations</span><span class="badge">1 seed each</span><span class="s">Full schedule vs fine-tuning only, 1000-way head</span></summary>
+    <div class="study-body">
+      <div class="scroll"><table class="data">
+        <thead><tr><th>Model</th><th class="num">Time</th><th class="num">Top-1 (1000-way)</th><th class="num">Top-5</th><th class="num">Firing</th><th class="num">Est. energy</th></tr></thead>
+        <tbody>
+          <tr><td>Teacher ViT-Tiny (not fine-tuned)</td><td class="num">–</td><td class="num">79.11%</td><td class="num">95.49%</td><td class="num">–</td><td class="num">5.77 mJ</td></tr>
+          <tr><td>Phase 1 + phase 2 (5 epochs)</td><td class="num">3.6 h</td><td class="num">63.67%</td><td class="num">93.48%</td><td class="num">7.1%</td><td class="num">0.52 mJ</td></tr>
+          <tr><td>Phase 2 only, 5 epochs</td><td class="num">1.5 h</td><td class="num">48.23%</td><td class="num">90.22%</td><td class="num">9.1%</td><td class="num">0.75 mJ</td></tr>
+          <tr><td>Phase 2 only, 12 epochs</td><td class="num">3.9 h</td><td class="num">59.72%</td><td class="num">91.77%</td><td class="num">9.1%</td><td class="num">0.77 mJ</td></tr>
+        </tbody>
+      </table></div>
+      <p>At equal fine-tuning schedule the full pipeline is 15.4 points ahead; with matched total time (12 epochs without phase 1), the gap falls to 3.95 points. So most of the first gap came from training time. Here the validation set was used both to monitor and to report.</p>
+    </div>
+  </details>
+
+  <details class="study">
+    <summary><span class="n">05</span><span class="t">A fairer evaluation: the 10-way head</span><span class="badge">evaluation fix</span><span class="s">The 1000-way head flattered the student</span></summary>
+    <div class="study-body"><p>The student is fine-tuned on the 10 Imagenette labels; the teacher is not. With the full 1000-way head, any teacher prediction among the 990 other ImageNet classes counts as an error, which shrinks the gap. Restricting both models' logits to the 10 Imagenette classes, the teacher reaches 99.16% and the gap grows from 15.4 to 35.5 points. From then on, accuracy is reported on the 10 classes.</p></div>
+  </details>
+
+  <details class="study">
+    <summary><span class="n">06</span><span class="t">Post hoc diagnostics of phase 1</span><span class="badge">262 validation images</span><span class="s">Relative error and the channel-41 outlier</span></summary>
+    <div class="study-body"><p>The phase-1 checkpoint was re-evaluated on a fixed subset of 262 validation images (every 15th image), recording teacher statistics. Absolute MSE is not comparable across stages when the scale of the targets changes, hence the relative error shown in section 5. From block 8 on, the teacher's channel 41 grows from a maximum of 12.0 at block 7 to 581.4 at block 8 (≈48×), carries over 90% of the hidden-state energy and 90–96% of the student's error. This is why the absolute loss jumps while the relative error does not. Whether the student cannot, or simply was not trained enough to, reproduce this channel was not tested; a per-layer normalised loss is the obvious next step.</p></div>
+  </details>
+
+  <details class="study">
+    <summary><span class="n">07</span><span class="t">Three-seed paired series</span><span class="badge">seeds 0, 1, 2</span><span class="s">Addressing the single-seed and validation-reuse problems</span></summary>
+    <div class="study-body"><dl>
+      <dt>Protocol</dt><dd>A stratified 10% of the training set (947 images) is held out for monitoring, leaving 8,522 training images. The official validation set is evaluated once per run, at the last epoch, with no checkpoint selection. Design: {with, without} phase 1 × {5, 12} fine-tuning epochs × 3 seeds. Within a seed, paired runs share data order, augmentations and schedule.</dd>
+      <dt>Result</dt><dd>With phase 1: 61.21 ± 0.38% (5 epochs) and 70.19 ± 0.54% (12 epochs); without: 48.23 ± 0.29% and 59.86 ± 0.27%. Paired differences +12.98 ± 0.51 and +10.33 ± 0.44 points, positive in every seed. Phase 1 + 5 epochs vs 12 epochs without it (similar total time): +1.43, +1.45 and +1.15 points.</dd>
+      <dt>Caveat</dt><dd>The validation set had been looked at in the preliminary runs, so it is not an independent test set; three seeds only bound the sign of the differences.</dd>
+    </dl></div>
+  </details>
+
+  <details class="study">
+    <summary><span class="n">08</span><span class="t">Activity and operation counts</span><span class="badge">measured counts, estimated energy</span><span class="s">How sparse is the student, and where does its work go?</span></summary>
+    <div class="study-body">
+      <p>On the 3,925 validation images, 7.06% of neurons spike at a given step. The first step is quieter than the next three:</p>
+      <div class="scroll"><table class="data">
+        <thead><tr><th>Step</th><th class="num">t = 1</th><th class="num">t = 2</th><th class="num">t = 3</th><th class="num">t = 4</th><th class="num">all</th></tr></thead>
+        <tbody><tr><td>Firing rate</td><td class="num">3.1%</td><td class="num">8.1%</td><td class="num">8.8%</td><td class="num">8.3%</td><td class="num">7.1%</td></tr></tbody>
+      </table></div>
+      <p>By layer: about 10% at the input neurons, 13–19% in front of each MLP, 1–4% for MLP hidden neurons, and up to 44% (72% at the last step) for the attention output neuron of the first block, a sign that its fixed scale and threshold are poorly matched there. The profiler counts 29.67 M MACs (patch embedding and readout) and 427.9 M accumulations per image, about 98% of them in spike-driven linear layers. The structural operations it does not count (18.5 M neuron updates, 3.6 M residual additions, 16.5 M bias additions) would raise the student's estimate to about 0.56–0.61 mJ, a ratio of roughly 9.5–10.4× instead of 11.1×.</p>
+    </div>
+  </details>
+
+  <details class="study">
+    <summary><span class="n">09</span><span class="t">Write-up and audit</span><span class="badge">reports</span><span class="s">Technical report, case study and short paper drafts</span></summary>
+    <div class="study-body"><p>The results were written up as a technical report with the scripts in appendix, a shorter case study and conference-style drafts. Successive audit passes corrected the hardware description, memory units, per-seed durations and the wording, to keep every claim non-causal: the comparisons do not isolate the distillation objective from extra training. Code, configurations, split indices, logs and per-run metrics are kept in a private repository.</p></div>
+  </details>
 </section>
 
 <section id="limits">
@@ -287,6 +387,13 @@ function drawRes(cmp) {
     : "At roughly similar total time (phase 1 + 5 epochs ≈ 2.7–3.1 h vs 12 epochs without it ≈ 3.2–3.3 h), the gain shrinks to +1.15 to +1.45 points, and the learning-rate schedules differ. Most of the gap is recovered by fine-tuning longer.";
 }
 seg('[aria-label="Comparison"]', "cmp", drawRes); drawRes("same");
+
+/* ---------- Open / close all steps (also #open-all in the URL) ---------- */
+(function () {
+  const b = document.querySelector("[data-toggle-all]"), all = () => document.querySelectorAll("details.study");
+  b.addEventListener("click", () => { const open = b.textContent === "Open all"; all().forEach(d => d.open = open); b.textContent = open ? "Close all" : "Open all"; });
+  if (location.hash === "#open-all") b.click();
+})();
 </script>
 </body>
 </html>
