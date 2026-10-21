@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Machine unlearning — Khalil Bibi</title>
+<meta name="description" content="Interactive explainer: why NegGrad+ machine unlearning becomes unreliable when the data to forget is concentrated in one class, in BatchNorm networks.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="research.css">
+</head>
+<body>
+<nav><div class="wrap"><a class="logo" href="../index.html">Khalil Bibi</a><a class="back" href="../index.html#projects">◂ All projects</a></div></nav>
+
+<header class="hero"><div class="wrap">
+  <div class="dialog">
+    <p class="kicker">Personal research · Oct 2026 · interactive explainer</p>
+    <h1>When “forget this data” breaks the model</h1>
+    <p>Machine unlearning removes the influence of some training examples without retraining from scratch. I studied a popular shortcut, <strong>NegGrad+</strong>, and found that it becomes unreliable when the examples to forget all come from <strong>the same class</strong>.</p>
+  </div>
+  <ul class="toc">
+    <li><a href="#setting">1 · The setting</a></li>
+    <li><a href="#why">2 · Why it can run away</a></li>
+    <li><a href="#findings">3 · What I found</a></li>
+    <li><a href="#fixes">4 · Can it be avoided?</a></li>
+    <li><a href="#trap">5 · A measurement trap</a></li>
+    <li><a href="#method">6 · How it was done</a></li>
+    <li><a href="#lessons">7 · Lessons and limits</a></li>
+  </ul>
+</div></header>
+
+<main class="wrap">
+
+<section id="setting">
+  <h2>The setting</h2>
+  <p>A small convolutional network is trained on <b>Fashion-MNIST</b> (55,000 photos of clothes, 10 classes). Then 600 of these photos must be forgotten. The gold standard is a model <b>retrained from scratch</b> without them; approximate methods try to get close to it much faster.</p>
+  <p>The question is simple: with the same number of photos to forget, does it matter whether they all come from one class (<b>concentrated</b>) or are spread evenly over the ten classes (<b>spread</b>)? In the concentrated case, the other photos of that class stay in the training data: the model should forget <em>these</em> 600 boots, not boots in general.</p>
+
+  <div class="panel">
+    <h3>Build a deletion request</h3>
+    <div class="controls">
+      <span class="seg" role="group" aria-label="Forget-set type">
+        <button type="button" data-mode="conc" aria-pressed="true">Concentrated</button>
+        <button type="button" data-mode="spread" aria-pressed="false">Spread</button>
+      </span>
+      <label id="classPick">class <select id="cls"></select></label>
+    </div>
+    <svg class="fig" id="figSet" viewBox="0 0 640 250" role="img" aria-label="The ten classes of the dataset, with the photos to forget highlighted"></svg>
+    <p class="hint" id="setText"></p>
+  </div>
+  <p>During unlearning, the photos to forget are fed to the network in batches of 64. Each <b>BatchNorm</b> layer rescales its signals using the mean and variance of the current batch. A concentrated request therefore produces batches made of a single class, whose statistics are very different from those of a normal, mixed batch. That turned out to matter.</p>
+</section>
+
+<section id="why">
+  <h2>Why NegGrad+ can run away</h2>
+  <p>NegGrad+ minimises <code>α·CE(keep) − (1−α)·CE(forget)</code>: it keeps practising on the data that stays, and pushes the error on the data to forget <em>up</em>. The error used is the cross-entropy, <code>CE = −log p</code>, where <code>p</code> is the probability the model gives to the true class.</p>
+  <div class="panel">
+    <h3>Push the probability of the true class down</h3>
+    <div class="controls"><label for="pSlider">p(true class) = <output id="pOut"></output></label><input id="pSlider" type="range" min="-7" max="0" step="0.05" value="-0.5" aria-label="log10 of the probability"></div>
+    <svg class="fig" id="figCE" viewBox="0 0 640 230" role="img" aria-label="Cross-entropy as a function of the probability of the true class"></svg>
+    <p class="hint">As <code>p</code> goes to 0, <code>−log p</code> grows without limit: nothing stops the push. In the experiments, a forget loss above 10 counts as a <b>divergence</b>. A control method that instead teaches random wrong labels has a finite target and cannot run away in the same way.</p>
+  </div>
+</section>
+
+<section id="findings">
+  <h2>What I found</h2>
+  <h3>1 · Concentration makes NegGrad+ unstable</h3>
+  <p>In a prospective study with 10 independent repetitions (seeds) and 68 mixes of 1, 2, 5 or 10 classes, NegGrad+ diverged mostly when the request was concentrated. Hover the bars.</p>
+  <div class="panel">
+    <div class="controls"><span class="seg" role="group" aria-label="Outcome">
+      <button type="button" data-out="div" aria-pressed="true">Diverged</button>
+      <button type="button" data-out="col" aria-pressed="false">Collapsed (native buffers)</button>
+    </span></div>
+    <svg class="fig" id="figDose" viewBox="0 0 640 240" role="img" aria-label="Share of runs that diverged by number of classes in the forget set"></svg>
+    <p class="hint">Runs out of: 100 one-class, 450 two-class, 120 five-class and 10 ten-class sets (implementation A, weight 0.01). A variant that keeps BatchNorm in evaluation mode (C) never diverged or collapsed in this study.</p>
+  </div>
+
+  <h3>2 · It is not just that some classes are harder</h3>
+  <p>A statistical model accounted for the difficulty of each class and for a whole family of ways to combine them (power means of order −3 to 3). Even then, <b>less concentrated sets had a lower early forget loss than their classes predict</b>: −0.246 decade per bit of label entropy (95% CI −0.263 to −0.228, all 10 seeds negative). A decade is a factor of 10. This rules out the combination rules of that family, not every possible interaction between specific pairs of classes.</p>
+
+  <h3>3 · It is specific to how NegGrad+ forgets</h3>
+  <p>With everything else identical, I compared NegGrad+ with the random-label control. The measure is the typical size of the gradients before they are clipped (<code>Ḡ</code>, in decades): how much more it grows for concentrated than for spread requests.</p>
+  <div class="panel">
+    <div class="controls"><span>forget weight 1−α:</span><span class="seg" role="group" aria-label="Forget weight">
+      <button type="button" data-w="0" aria-pressed="false">0.001</button>
+      <button type="button" data-w="1" aria-pressed="true">0.01</button>
+      <button type="button" data-w="2" aria-pressed="false">0.05</button>
+    </span></div>
+    <svg class="fig" id="figG" viewBox="0 0 640 210" role="img" aria-label="Concentration shift of gradient size under NegGrad+ and random labels"></svg>
+    <p class="hint" id="gText"></p>
+  </div>
+</section>
+
+<section id="fixes">
+  <h2>Can it be avoided?</h2>
+  <p>Three pre-specified follow-up studies tried to remove the <b>penalty</b>: how much more accuracy on the remaining data the model loses with concentrated requests than with spread ones (in percentage points, after recomputing BatchNorm statistics). Each dot is one seed.</p>
+  <div class="panel">
+    <div class="controls"><span class="seg" role="group" aria-label="Study">
+      <button type="button" data-st="cf" aria-pressed="false">Frozen target</button>
+      <button type="button" data-st="rd" aria-pressed="true">BatchNorm fix (RD64)</button>
+      <button type="button" data-st="tuning" aria-pressed="false">Per-class tuning</button>
+    </span></div>
+    <svg class="fig" id="figPen" viewBox="0 0 640 260" role="img" aria-label="Per-seed concentration penalty for each arm of the selected study"></svg>
+    <p class="hint" id="penText"></p>
+  </div>
+
+  <h3>Inside the tuning study</h3>
+  <p>For each class, 20 settings (4 learning rates × 5 forget weights) were tried on 3 seeds. A setting counted as <b>stable</b> if no run diverged or collapsed, and as <b>feasible</b> if it also reached the forgetting strength of the retrained model. Pick a class.</p>
+  <div class="panel">
+    <div class="controls"><label>class <select id="tcls"></select></label></div>
+    <div class="two">
+      <div>
+        <svg class="fig" id="figGrid" viewBox="0 0 320 175" role="img" aria-label="Which of the 20 settings were stable"></svg>
+        <p class="hint">Rows: learning rate; columns: forget weight. Filled = stable on all 3 tuning seeds; ringed = the setting the rule chose.</p>
+      </div>
+      <div>
+        <svg class="fig" id="figForce" viewBox="0 0 300 150" role="img" aria-label="Forgetting strength of the chosen setting versus the retrained model"></svg>
+        <p class="hint">Forgetting strength (decades) of the chosen setting vs the retrained model.</p>
+      </div>
+    </div>
+    <p id="tText"></p>
+  </div>
+  <div class="note"><b>Reading.</b> Tuning brought the penalty from about 14 points to about 1, but for 7 of 10 classes no stable setting reached the retrained model's strength: the tuned method mostly <em>acted less</em>. The BatchNorm fix behaved similarly: it protected the model but barely changed its predictions on the data to forget.</div>
+</section>
+
+<section id="trap">
+  <h2>A measurement trap</h2>
+  <p>Many runs looked “collapsed” (test accuracy ≤ 20%). But that accuracy is measured with the statistics BatchNorm stored during unlearning, which the single-class batches had corrupted. Recompute those statistics on the remaining data, without touching any weight, and see what happens.</p>
+  <div class="panel">
+    <div class="controls"><span class="seg" role="group" aria-label="Evaluation">
+      <button type="button" data-ev="nat" aria-pressed="true">Stored (native) statistics</button>
+      <button type="button" data-ev="rec" aria-pressed="false">Recomputed statistics</button>
+    </span></div>
+    <svg class="fig" id="figTrap" viewBox="0 0 640 220" role="img" aria-label="Test accuracy of collapsed runs before and after recomputing BatchNorm statistics"></svg>
+    <p class="hint" id="trapText"></p>
+  </div>
+  <p>A real loss remains (about 74% vs 93% for the original model), but much smaller than it first appeared. How an unlearned model is evaluated can change the conclusion.</p>
+</section>
+
+<section id="method">
+  <h2>How it was done</h2>
+  <p>It began with an unexpected failure, continued with exploratory diagnostics, and then moved to studies whose plan was fixed before any result was seen:</p>
+  <div class="panel">
+    <svg class="fig" id="figMethod" viewBox="0 0 640 120" role="img" aria-label="Workflow: protocol, simulations, freeze, pilot, study, frozen analysis"></svg>
+  </div>
+  <ul class="list">
+    <li><b>Protocol</b>: the question, one main test and the wording of each possible conclusion.</li>
+    <li><b>Simulations</b>: how many seeds are needed (power), and whether the test raises false alarms (calibration).</li>
+    <li><b>Freeze</b>: the plan and the code are committed with a fingerprint before the run.</li>
+    <li><b>Pilot</b>: only to measure computing time; its results stay sealed.</li>
+    <li><b>Study and frozen analysis</b>: run on a cloud GPU (A100), analysed exactly as written.</li>
+  </ul>
+  <p>Each seed trains a new model, and the statistics treat one seed as one data point. The studies share some data, so they are not fully independent replications, and the plans live in a private repository rather than a public registry.</p>
+</section>
+
+<section id="lessons">
+  <h2>Lessons and limits</h2>
+  <div class="two">
+    <div>
+      <h3>If you deploy unlearning</h3>
+      <ul class="list">
+        <li>Look at the class composition of deletion requests.</li>
+        <li>Test the method on concentrated requests: spread ones never showed the failure.</li>
+        <li>Report divergence, collapse, accuracy loss and forgetting strength separately.</li>
+        <li>Do not assume that tuning will save you.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>What this does not show</h3>
+      <ul class="list">
+        <li>No study measured true erasure or privacy.</li>
+        <li>BatchNorm is a suspect, not a proven mechanism.</li>
+        <li>Mostly one small CNN on Fashion-MNIST, with smaller checks on CIFAR-10 and Tiny ImageNet.</li>
+      </ul>
+    </div>
+  </div>
+  <p><a class="back" href="../files/machine-unlearning-overview.pdf" target="_blank" rel="noopener">Plain-language overview (PDF)</a> · code private, technical working paper on request.</p>
+</section>
+<div class="dash"></div>
+</main>
+<footer><div class="wrap">All numbers come from the project's frozen analyses. Figures are drawn in the browser from those values.</div></footer>
+<div class="tip" id="tip" role="status"></div>
+
+<script>
+const NS = "http://www.w3.org/2000/svg";
+const C = { c0: "#f1f4e6", c1: "#c3ccb0", c2: "#66734f", c3: "#33402a", c4: "#10150d" };
+const CLASSES = ["T-shirt", "Trouser", "Pullover", "Dress", "Coat", "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"];
+function el(tag, attrs, parent, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const tip = document.getElementById("tip");
+function hover(node, html) {
+  node.style.cursor = "default";
+  node.addEventListener("pointermove", ev => { tip.innerHTML = html; tip.style.display = "block";
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 270) + "px"; tip.style.top = (ev.clientY + 14) + "px"; });
+  node.addEventListener("pointerleave", () => { tip.style.display = "none"; });
+}
+function seg(selector, attr, cb) {
+  const btns = document.querySelectorAll(selector + " button");
+  btns.forEach(b => b.addEventListener("click", () => {
+    btns.forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+    cb(b.dataset[attr]);
+  }));
+}
+function clear(svg) { while (svg.firstChild) svg.removeChild(svg.firstChild); }
+function fmt(x, d = 2) { return x.toFixed(d).replace("-", "−"); }
+
+/* ---------- 1. Deletion request builder (exact composition, schematic layout) ---------- */
+const figSet = document.getElementById("figSet"), cls = document.getElementById("cls");
+CLASSES.forEach((n, i) => cls.appendChild(Object.assign(document.createElement("option"), { value: i, textContent: n })));
+cls.value = 9;
+let mode = "conc";
+function drawSet() {
+  clear(figSet);
+  // One square = 60 photos; each class has about 5,500 photos (90 squares, 6 wide × 15 high).
+  const target = +cls.value, colW = 61, x0 = 22, perCol = 90;
+  for (let c = 0; c < 10; c++) {
+    const nF = mode === "conc" ? (c === target ? 10 : 0) : 1;
+    for (let idx = 0; idx < perCol; idx++) {
+      const col = idx % 6, row = 14 - Math.floor(idx / 6);
+      el("rect", { x: x0 + c * colW + col * 9, y: 18 + row * 10, width: 7.5, height: 8.5,
+        fill: idx < nF ? C.c4 : C.c1, stroke: idx < nF ? C.c4 : C.c2, "stroke-width": .5 }, figSet);
+    }
+    el("text", { x: x0 + c * colW + 26, y: 184, "text-anchor": "middle", "font-size": 10 }, figSet, CLASSES[c].split(" ")[0]);
+  }
+  // forget batch of 64
+  const by = 205;
+  el("text", { x: 30, y: by + 2, "font-size": 12 }, figSet, "one forget batch (64 photos):");
+  for (let i = 0; i < 64; i++) {
+    const c = mode === "conc" ? target : Math.floor(i * 10 / 64);
+    const shade = mode === "conc" ? C.c4 : [C.c4, C.c2, C.c3, C.c1][c % 4];
+    el("rect", { x: 250 + (i % 32) * 11.5, y: by - 12 + Math.floor(i / 32) * 13, width: 9, height: 10, fill: shade, stroke: C.c4, "stroke-width": .6 }, figSet);
+  }
+  const t = document.getElementById("setText");
+  t.textContent = mode === "conc"
+    ? `Concentrated: all 600 photos to forget are “${CLASSES[target]}” (about 11% of that class; the rest stays). Every forget batch contains a single class. One square = 60 photos; dark squares are the photos to forget.`
+    : "Spread: 60 photos from each of the 10 classes (one dark square each). Each forget batch mixes all classes, like a normal training batch.";
+  document.getElementById("classPick").style.visibility = mode === "conc" ? "visible" : "hidden";
+}
+cls.addEventListener("change", drawSet);
+seg('[aria-label="Forget-set type"]', "mode", m => { mode = m; drawSet(); });
+drawSet();
+
+/* ---------- 2. Cross-entropy curve (exact formula) ---------- */
+const figCE = document.getElementById("figCE"), pS = document.getElementById("pSlider");
+function drawCE() {
+  clear(figCE);
+  const L = 60, R = 610, T = 15, B = 190, maxCE = 17;
+  const X = lp => L + (lp + 7) / 7 * (R - L), Y = ce => B - ce / maxCE * (B - T);
+  el("line", { x1: L, y1: B, x2: R, y2: B, stroke: C.c4, "stroke-width": 2 }, figCE);
+  el("line", { x1: L, y1: T, x2: L, y2: B, stroke: C.c4, "stroke-width": 2 }, figCE);
+  [-7, -6, -5, -4, -3, -2, -1, 0].forEach(v => el("text", { x: X(v), y: B + 16, "text-anchor": "middle", "font-size": 11 }, figCE, v === 0 ? "1" : "1e" + v));
+  [0, 5, 10, 15].forEach(v => el("text", { x: L - 8, y: Y(v) + 4, "text-anchor": "end", "font-size": 11 }, figCE, v));
+  el("text", { x: (L + R) / 2, y: B + 34, "text-anchor": "middle", "font-size": 12 }, figCE, "probability of the true class (log scale)");
+  el("text", { x: 14, y: T + 8, "font-size": 12 }, figCE, "CE");
+  el("line", { x1: L, y1: Y(10), x2: R, y2: Y(10), stroke: C.c2, "stroke-dasharray": "6 5", "stroke-width": 2 }, figCE);
+  el("text", { x: R - 4, y: Y(10) - 6, "text-anchor": "end", "font-size": 11 }, figCE, "divergence threshold (CE > 10)");
+  let d = ""; for (let lp = -7; lp <= 0.0001; lp += 0.05) d += (d ? "L" : "M") + X(lp).toFixed(1) + "," + Y(-lp * Math.LN10).toFixed(1);
+  el("path", { d, fill: "none", stroke: C.c4, "stroke-width": 3 }, figCE);
+  const lp = +pS.value, ce = -lp * Math.LN10;
+  el("rect", { x: X(lp) - 6, y: Y(ce) - 6, width: 12, height: 12, fill: ce > 10 ? C.c2 : C.c4, stroke: C.c0, "stroke-width": 2 }, figCE);
+  el("text", { x: X(lp) + (lp > -3 ? -4 : 14), y: Y(ce) - (lp > -3 ? 22 : 8), "text-anchor": lp > -3 ? "end" : "start", "font-size": 12, "font-weight": 700 }, figCE, "CE = " + ce.toFixed(2));
+  document.getElementById("pOut").textContent = Math.pow(10, lp).toExponential(1);
+}
+pS.addEventListener("input", drawCE); drawCE();
+
+/* ---------- 3. Concentration study counts (real) ---------- */
+const DOSE = { lev: ["1 class", "2 classes", "5 classes", "10 classes"], n: [100, 450, 120, 10], div: [62, 67, 0, 0], col: [54, 22, 0, 0] };
+const figDose = document.getElementById("figDose");
+function drawDose(o) {
+  clear(figDose);
+  const L = 60, B = 200, H = 175, top = 80, w = 90;
+  el("line", { x1: L, y1: B, x2: 600, y2: B, stroke: C.c4, "stroke-width": 2 }, figDose);
+  [0, 20, 40, 60, 80].forEach(v => { el("text", { x: L - 8, y: B - v / top * H + 4, "text-anchor": "end", "font-size": 11 }, figDose, v + "%");
+    el("line", { x1: L, y1: B - v / top * H, x2: 600, y2: B - v / top * H, stroke: C.c1, "stroke-width": 1 }, figDose); });
+  DOSE.lev.forEach((lv, i) => {
+    const k = DOSE[o][i], n = DOSE.n[i], pct = k / n * 100, x = L + 30 + i * 130;
+    const r = el("rect", { x, y: B - pct / top * H, width: w, height: Math.max(pct / top * H, 1.5), fill: C.c4 }, figDose);
+    el("text", { x: x + w / 2, y: B - pct / top * H - 6, "text-anchor": "middle", "font-size": 12, "font-weight": 700 }, figDose, `${k}/${n}`);
+    el("text", { x: x + w / 2, y: B + 18, "text-anchor": "middle", "font-size": 12 }, figDose, lv);
+    hover(r, `${lv}: ${k} of ${n} runs ${o === "div" ? "diverged" : "collapsed (native statistics)"} (${pct.toFixed(0)}%)`);
+  });
+}
+seg('[aria-label="Outcome"]', "out", drawDose); drawDose("div");
+
+/* ---------- 4. Gradient-size shift, NG vs RL (real, mean and 95% CI) ---------- */
+const GB = [
+  { w: "0.001", ng: [0.009, -0.001, 0.019], rl: [0.023, 0.016, 0.031] },
+  { w: "0.01", ng: [0.705, 0.663, 0.746], rl: [0.053, 0.045, 0.061] },
+  { w: "0.05", ng: [2.557, 2.509, 2.605], rl: [-0.087, -0.104, -0.070] }];
+const figG = document.getElementById("figG");
+function drawG(i) {
+  clear(figG);
+  const d = GB[+i], lo = Math.min(0, d.ng[1], d.rl[1]) - .05, hi = Math.max(d.ng[2], d.rl[2]) * 1.15 + .02;
+  const L = 160, R = 600, X = v => L + (v - lo) / (hi - lo) * (R - L);
+  el("line", { x1: X(0), y1: 20, x2: X(0), y2: 170, stroke: C.c3, "stroke-width": 2 }, figG);
+  el("text", { x: X(0), y: 188, "text-anchor": "middle", "font-size": 11 }, figG, "0 (no effect)");
+  [["NegGrad+", d.ng, 60], ["Random labels", d.rl, 125]].forEach(([n, v, y]) => {
+    el("text", { x: L - 12, y: y + 5, "text-anchor": "end", "font-size": 13 }, figG, n);
+    const b = el("rect", { x: Math.min(X(0), X(v[0])), y: y - 14, width: Math.max(Math.abs(X(v[0]) - X(0)), 2), height: 28, fill: n === "NegGrad+" ? C.c4 : C.c2 }, figG);
+    el("line", { x1: X(v[1]), y1: y, x2: X(v[2]), y2: y, stroke: C.c0, "stroke-width": 2 }, figG);
+    el("text", { x: X(Math.max(v[0], 0)) + 8, y: y + 5, "font-size": 12, "font-weight": 700 }, figG, fmt(v[0], 3));
+    hover(b, `${n}, weight ${d.w}: ${fmt(v[0], 3)} decade [95% CI ${fmt(v[1], 3)}, ${fmt(v[2], 3)}]`);
+  });
+  const ratio = (x) => Math.pow(10, x);
+  document.getElementById("gText").textContent = +i === 1
+    ? `At the main weight 0.01: under NegGrad+ the typical gradient grows ≈${ratio(d.ng[0]).toFixed(1)}× with concentration; under random labels only ≈${ratio(d.rl[0]).toFixed(2)}× (a shift the coarse “share of clipped steps” could not see). Difference: 0.652 decade [0.607, 0.696], positive in all 10 seeds.`
+    : +i === 0 ? "At 0.001 the NegGrad+ shift is close to zero and slightly below the random-label one: the effect depends on the weight."
+      : "At 0.05 the NegGrad+ shift is huge and the random-label shift is negative: the direction depends on the weight, so this is not a universal instability score.";
+}
+seg('[aria-label="Forget weight"]', "w", drawG); drawG(1);
+
+/* ---------- 5. Per-seed penalties (real) ---------- */
+const PEN = {
+  cf: { arms: { NG: [19.18, 18.92, 20.8, 12.21, 21.57, 13.6, 12.73, 16.17, 16.27, 19.71, 13.09, 13.67], "Random labels": [0.27, 0.43, 0.14, 0.22, 0.37, 0.29, 0.3, 0.19, 0.07, 0.33, 0.24, -0.07], "Frozen target": [0.23, 0.49, 0.18, 0.1, 0.35, 0.3, 0.37, 0.11, 0.13, 0.47, 0.24, 0.01] },
+        text: "Frozen-target study (12 seeds): replacing the unbounded push with a fixed, sensible target (from the original model's other-class probabilities) removed the penalty (interaction 16.2 points, 95% CI 14.1 to 18.4). But on concentrated requests it barely changed the predictions on the data to forget (accuracy stayed at 96.7–97.4%), so this is not successful forgetting." },
+  rd: { arms: { "NegGrad+": [17.55, 13.55, 14.39, 12.71, 16.08, 14.28, 15.38, 14.48, 11.04, 12.62, 11.87, 13.28, 11.61, 14.81], "with RD64": [0.46, 0.4, 0.06, -0.53, 0.25, 0.06, 0.02, 0.22, 0.33, 0.16, 0.24, 0.16, 0.26, 0.15] },
+        text: "RD64 study (14 seeds): normalising the forget batch with statistics borrowed from the batch to keep reduced the penalty by 13.7 points (95% CI 12.6 to 14.7) and removed every divergence (0/140 vs 84/140). It changes three things at once, and its forgetting strength stayed tiny (≈0.03 decade)." },
+  tuning: { arms: { "default settings": [12.07, 14.29, 13.69, 15.98, 10.49, 15.66, 14.58, 18.01, 14.68, 14.3, 12.1, 14.82], "tuned per class": [1.27, 0.86, 1.19, 1.49, 0.47, 1.08, 1.16, 1.32, 1.48, 1.02, 0.86, 0.69] },
+        text: "Tuning study (12 new seeds): settings chosen per class on 3 other seeds brought the penalty to 1.07 points (95% CI 0.88 to 1.27), within a ±2-point margin, vs 14.2 with the default settings. Not an equal-strength comparison: see the explorer below." } };
+const figPen = document.getElementById("figPen");
+function drawPen(st) {
+  clear(figPen);
+  const s = PEN[st], names = Object.keys(s.arms), L = 60, R = 620, B = 210, T = 20, lo = -2, hi = 23;
+  const Y = v => B - (v - lo) / (hi - lo) * (B - T);
+  [0, 5, 10, 15, 20].forEach(v => { el("line", { x1: L, y1: Y(v), x2: R, y2: Y(v), stroke: v === 0 ? C.c3 : C.c1, "stroke-width": v === 0 ? 2 : 1 }, figPen);
+    el("text", { x: L - 8, y: Y(v) + 4, "text-anchor": "end", "font-size": 11 }, figPen, v); });
+  el("text", { x: 12, y: T - 4, "font-size": 11 }, figPen, "points");
+  const gap = (R - L) / names.length;
+  names.forEach((n, j) => {
+    const v = s.arms[n], cx = L + gap * (j + .5), m = v.reduce((a, b) => a + b, 0) / v.length;
+    const sd = Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / (v.length - 1)), tq = { 12: 2.201, 14: 2.160 }[v.length], h = tq * sd / Math.sqrt(v.length);
+    v.forEach((x, k) => { const p = el("rect", { x: cx - 34 + (k % 7) * 10, y: Y(x) - 4, width: 8, height: 8, fill: C.c2, stroke: C.c0, "stroke-width": 1 }, figPen);
+      hover(p, `${n}, seed ${k + 1}: ${fmt(x)} points`); });
+    el("line", { x1: cx + 46, y1: Y(m - h), x2: cx + 46, y2: Y(m + h), stroke: C.c4, "stroke-width": 3 }, figPen);
+    el("rect", { x: cx + 38, y: Y(m) - 2, width: 16, height: 4, fill: C.c4 }, figPen);
+    el("text", { x: cx + 60, y: Y(m) + 4, "font-size": 12, "font-weight": 700 }, figPen, fmt(m, 2));
+    el("text", { x: cx, y: B + 22, "text-anchor": "middle", "font-size": 12 }, figPen, n);
+  });
+  document.getElementById("penText").textContent = s.text + " Green squares: seeds; black bar: mean and 95% interval.";
+}
+seg('[aria-label="Study"]', "st", drawPen); drawPen("rd");
+
+/* ---------- 6. Tuning explorer (real) ---------- */
+const SEL = { stratifie: [0.01, 0.03, 1, 0.085, 0.092, 20], c0: [0.001, 0.03, 0, 0.133, 0.107, 11], c1: [0.03, 0.001, 0, 0.016, 0.006, 6], c2: [0.03, 0.001, 0, 0.14, 0.134, 8],
+  c3: [0.03, 0.001, 0, 0.1, 0.051, 12], c4: [0.03, 0.001, 1, 0.136, 0.144, 7], c5: [0.01, 0.003, 0, 0.027, 0.004, 9], c6: [0.03, 0.003, 0, 0.242, 0.135, 10],
+  c7: [0.001, 0.001, 0, 0.028, 0.002, 1], c8: [0.001, 0.05, 1, 0.017, 0.144, 14], c9: [0.003, 0.05, 1, 0.036, 0.046, 16] };
+// Stability of each setting (rows: learning rate 0.001, 0.003, 0.01, 0.03; columns: weight 0.001 … 0.05), from the tuning runs.
+const GRID = { c0: "11110111001100011000", c1: "11000110001000010000", c2: "11100110001100010000", c3: "11110111001110011000", c4: "11100110001000010000",
+  c5: "11100111001100010000", c6: "11100111001100011000", c7: "10000000000000000000", c8: "11111111001110011100", c9: "11111111111110011100", stratifie: "11111111111111111111" };
+const tcls = document.getElementById("tcls");
+tcls.appendChild(Object.assign(document.createElement("option"), { value: "stratifie", textContent: "Spread request (all classes)" }));
+CLASSES.forEach((n, i) => tcls.appendChild(Object.assign(document.createElement("option"), { value: "c" + i, textContent: n + " (concentrated)" })));
+tcls.value = "c7";
+function drawTune() {
+  const [lr, k, ok, target, force, stable] = SEL[tcls.value], g = document.getElementById("figGrid"), f = document.getElementById("figForce");
+  clear(g); clear(f);
+  const LRS = [0.001, 0.003, 0.01, 0.03], KS = [0.001, 0.003, 0.01, 0.03, 0.05], grid = GRID[tcls.value];
+  KS.forEach((kk, j) => el("text", { x: 78 + j * 48, y: 14, "text-anchor": "middle", "font-size": 10 }, g, kk));
+  LRS.forEach((l, i) => { el("text", { x: 50, y: 37 + i * 30, "text-anchor": "end", "font-size": 10 }, g, l);
+    KS.forEach((kk, j) => { const st = grid[i * 5 + j] === "1", chosen = l === lr && kk === k;
+      const r = el("rect", { x: 60 + j * 48, y: 22 + i * 30, width: 36, height: 22, fill: st ? C.c4 : C.c0, stroke: chosen ? C.c2 : C.c4, "stroke-width": chosen ? 5 : 2 }, g);
+      hover(r, `learning rate ${l}, forget weight ${kk}: ${st ? "stable" : "unstable on at least one seed"}${chosen ? " — chosen" : ""}`); }); });
+  el("text", { x: 4, y: 14, "font-size": 10 }, g, "lr \\ weight");
+  el("text", { x: 178, y: 168, "text-anchor": "middle", "font-size": 13, "font-weight": 700 }, g, `${stable} / 20 stable`);
+  const mx = Math.max(target, force, .05) * 1.25, X = v => 20 + v / mx * 240;
+  [["chosen", force, C.c4, 40], ["retrained", target, C.c2, 95]].forEach(([n, v, c, y]) => {
+    el("rect", { x: 20, y, width: Math.max(X(v) - 20, 2), height: 26, fill: c }, f);
+    el("text", { x: X(v) + 6, y: y + 18, "font-size": 12, "font-weight": 700 }, f, v.toFixed(3));
+    el("text", { x: 20, y: y - 6, "font-size": 12 }, f, n === "chosen" ? "chosen setting" : "retrained model");
+  });
+  const name = tcls.value === "stratifie" ? "the spread request" : CLASSES[+tcls.value.slice(1)];
+  document.getElementById("tText").innerHTML = ok
+    ? `<b>Feasible.</b> For ${name}, the chosen setting (learning rate ${lr}, forget weight ${k}) is stable and reaches the retrained model's strength.`
+    : `<b>No feasible setting.</b> For ${name}, no stable setting reached the retrained model's strength, so the rule fell back on the strongest stable one (learning rate ${lr}, forget weight ${k}), which reaches only ${Math.round(force / target * 100)}% of that strength.`;
+}
+tcls.addEventListener("change", drawTune); drawTune();
+
+/* ---------- 7. Measurement trap (real means of collapsed runs) ---------- */
+const TRAP = [{ s: "RD64 study", n: "75 runs", nat: 10.8, rec: 74.2 }, { s: "Tuning study (default)", n: "65 runs", nat: 10.4, rec: 73.4 }, { s: "Frozen-target study", n: "70 runs", nat: 10.6, rec: 70.1 }];
+const figTrap = document.getElementById("figTrap");
+function drawTrap(ev) {
+  clear(figTrap);
+  const L = 210, R = 600, X = v => L + v / 100 * (R - L);
+  [0, 25, 50, 75, 100].forEach(v => { el("line", { x1: X(v), y1: 10, x2: X(v), y2: 160, stroke: C.c1 }, figTrap); el("text", { x: X(v), y: 178, "text-anchor": "middle", "font-size": 11 }, figTrap, v + "%"); });
+  el("line", { x1: X(93.3), y1: 6, x2: X(93.3), y2: 164, stroke: C.c2, "stroke-width": 3, "stroke-dasharray": "5 4" }, figTrap);
+  el("text", { x: X(93.3), y: 198, "text-anchor": "middle", "font-size": 11 }, figTrap, "original model ≈ 93%");
+  TRAP.forEach((t, i) => { const y = 22 + i * 48, v = ev === "nat" ? t.nat : t.rec;
+    el("text", { x: L - 10, y: y + 12, "text-anchor": "end", "font-size": 12 }, figTrap, t.s);
+    el("text", { x: L - 10, y: y + 27, "text-anchor": "end", "font-size": 11, fill: C.c3 }, figTrap, t.n);
+    const b = el("rect", { x: L, y, width: X(v) - L, height: 28, fill: C.c4 }, figTrap);
+    el("text", { x: X(v) + 6, y: y + 19, "font-size": 12, "font-weight": 700 }, figTrap, v.toFixed(1) + "%");
+    hover(b, `${t.s}: ${t.n} counted as collapsed. Mean test accuracy ${t.nat}% with stored statistics, ${t.rec}% after recomputing them.`); });
+  document.getElementById("trapText").textContent = ev === "nat"
+    ? "Mean test accuracy of the runs counted as collapsed, with the statistics stored during unlearning."
+    : "Same runs, same weights, statistics recomputed on the remaining data: only 0, 1 and 4 of them stay at or below 20%.";
+}
+seg('[aria-label="Evaluation"]', "ev", drawTrap); drawTrap("nat");
+
+/* ---------- 8. Workflow ---------- */
+(function () {
+  const s = document.getElementById("figMethod"), steps = ["Protocol", "Simulations", "Freeze", "Pilot", "Study", "Analysis"];
+  steps.forEach((t, i) => { const x = 8 + i * 106;
+    el("rect", { x, y: 34, width: 88, height: 44, fill: i === 5 ? C.c4 : C.c0, stroke: C.c4, "stroke-width": 3 }, s);
+    el("text", { x: x + 44, y: 61, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: i === 5 ? C.c0 : C.c4 }, s, t);
+    if (i < 5) el("path", { d: `M${x + 90},56 L${x + 104},56 M${x + 98},50 L${x + 104},56 L${x + 98},62`, stroke: C.c4, "stroke-width": 3, fill: "none" }, s); });
+  el("text", { x: 320, y: 104, "text-anchor": "middle", "font-size": 11, fill: C.c3 }, s, "everything left of the study is committed before any result is seen");
+})();
+</script>
+</body>
+</html>

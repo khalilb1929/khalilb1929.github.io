@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vit2snn — Khalil Bibi</title>
+<meta name="description" content="Interactive explainer: distilling a Vision Transformer (ViT-Tiny) into a spiking Vision Transformer with 4 time steps, trained on a laptop.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="research.css">
+</head>
+<body>
+<nav><div class="wrap"><a class="logo" href="../index.html">Khalil Bibi</a><a class="back" href="../index.html#projects">◂ All projects</a></div></nav>
+
+<header class="hero"><div class="wrap">
+  <div class="dialog">
+    <p class="kicker">Personal research · interactive explainer</p>
+    <h1>vit2snn: teaching a spiking network to see like a Vision Transformer</h1>
+    <p>A pretrained <strong>ViT-Tiny/16</strong> (5.7 M parameters) is distilled into a <strong>spiking</strong> Vision Transformer whose neurons communicate with 0/1 events over <strong>4 time steps</strong>. Everything was trained on a laptop (Apple M2).</p>
+  </div>
+  <ul class="toc">
+    <li><a href="#spikes">1 · Spiking neurons</a></li>
+    <li><a href="#energy">2 · Why spikes could save energy</a></li>
+    <li><a href="#arch">3 · The student network</a></li>
+    <li><a href="#training">4 · Two-phase training</a></li>
+    <li><a href="#align">5 · How well did it copy?</a></li>
+    <li><a href="#results">6 · Results</a></li>
+    <li><a href="#limits">7 · Limits</a></li>
+  </ul>
+</div></header>
+
+<main class="wrap">
+
+<section id="spikes">
+  <h2>Spiking neurons</h2>
+  <p>A normal neuron outputs a real number. A <b>spiking</b> neuron accumulates its input in a membrane potential and only emits a binary event (a spike) when that potential crosses a threshold. The network used here runs for <b>T = 4</b> time steps per image, with <b>leaky integrate-and-fire (LIF)</b> neurons:</p>
+  <p><code>H<sub>t</sub> = V<sub>t−1</sub> + (X<sub>t</sub> − V<sub>t−1</sub>)/τ</code>, &nbsp; spike <code>S<sub>t</sub> = 1 if H<sub>t</sub> ≥ V<sub>th</sub></code>, &nbsp; then <code>V<sub>t</sub> = H<sub>t</sub> − V<sub>th</sub>·S<sub>t</sub></code> (soft reset), with τ = 2 and V<sub>th</sub> = 1.</p>
+  <div class="panel">
+    <h3>Play with one neuron</h3>
+    <div class="controls">
+      <label for="xIn">input X = <output id="xOut"></output></label><input id="xIn" type="range" min="0" max="3" step="0.05" value="1.4">
+      <label for="tIn">steps = <output id="tOut"></output></label><input id="tIn" type="range" min="4" max="16" step="1" value="4" style="width:140px">
+    </div>
+    <svg class="fig" id="figLIF" viewBox="0 0 640 250" role="img" aria-label="Membrane potential and spikes of one LIF neuron over time"></svg>
+    <p class="hint" id="lifText"></p>
+  </div>
+  <p>Spikes are not differentiable, so training uses a <b>surrogate gradient</b>: the forward pass uses the step function, the backward pass a smooth arctangent approximation of it.</p>
+</section>
+
+<section id="energy">
+  <h2>Why spikes could save energy</h2>
+  <p>When a layer receives binary inputs, multiplying by the weights reduces to <b>adding</b> the selected weights: a multiply–accumulate (MAC) becomes a cheaper accumulate (AC). A per-operation energy model (45 nm chip figures) turns operation counts into an estimate. Change the costs to see how fragile the estimate is.</p>
+  <div class="panel">
+    <h3>Operation-energy calculator (per image)</h3>
+    <div class="controls">
+      <label for="macIn">energy per MAC = <output id="macOut"></output> pJ</label><input id="macIn" type="range" min="1" max="8" step="0.1" value="4.6" style="width:170px">
+      <label for="acIn">per AC = <output id="acOut"></output> pJ</label><input id="acIn" type="range" min="0.1" max="3" step="0.05" value="0.9" style="width:170px">
+    </div>
+    <svg class="fig" id="figE" viewBox="0 0 640 170" role="img" aria-label="Estimated operation energy of the teacher and the spiking student"></svg>
+    <p class="hint" id="eText"></p>
+  </div>
+  <div class="note warn"><b>Not a measurement.</b> This is arithmetic on operation counts. It ignores memory traffic, data movement and neuron state updates (counting them lowers the ratio to about 9.5–10.4×), and nothing was measured on the laptop or on neuromorphic hardware.</div>
+</section>
+
+<section id="arch">
+  <h2>The student network</h2>
+  <p>The student starts from the teacher's weights (5.80 M parameters vs 5.72 M) and keeps its overall shape. Click a part of the diagram.</p>
+  <div class="panel">
+    <svg class="fig" id="figArch" viewBox="0 0 640 210" role="img" aria-label="Architecture of the spiking student, clickable"></svg>
+    <p id="archText" class="hint"></p>
+  </div>
+</section>
+
+<section id="training">
+  <h2>Two-phase training</h2>
+  <p><b>Phase 1, stage-wise distillation.</b> The encoder (stage 0) and then each of the 12 blocks are trained one at a time, everything else frozen, so that the time-averaged output of the student block matches the teacher's hidden state (mean squared error). <b>Phase 2, fine-tuning.</b> The whole student is trained on the labels, with a cross-entropy loss plus a distillation term that matches the teacher's softened predictions.</p>
+  <div class="panel">
+    <h3>Walk through phase 1</h3>
+    <div class="controls">
+      <label for="stIn">training stage = <output id="stOut"></output></label><input id="stIn" type="range" min="0" max="13" step="1" value="3">
+    </div>
+    <svg class="fig" id="figStage" viewBox="0 0 640 150" role="img" aria-label="Which stage is trained, frozen or not yet trained"></svg>
+    <div class="legend"><span><i style="background:#10150d"></i>being trained</span><span><i style="background:#66734f"></i>trained, now frozen</span><span><i style="background:#f1f4e6"></i>not yet trained</span></div>
+    <p class="hint" id="stText"></p>
+  </div>
+</section>
+
+<section id="align">
+  <h2>How well did it copy?</h2>
+  <p>After phase 1 alone, the student is close to chance (17.5% on the 10 classes), so phase 1 is not a finished copy. A diagnostic on 262 validation images compares each stage with the teacher. The <b>relative error</b> divides the error by that of a trivial predictor that outputs each channel's average (1 = no better than that).</p>
+  <div class="panel">
+    <div class="controls"><span class="seg" role="group" aria-label="Alignment measure">
+      <button type="button" data-m="rho" aria-pressed="true">Relative error</button>
+      <button type="button" data-m="mse" aria-pressed="false">Absolute error (log)</button>
+      <button type="button" data-m="ch" aria-pressed="false">Share of channel 41</button>
+    </span></div>
+    <svg class="fig" id="figAlign" viewBox="0 0 640 230" role="img" aria-label="Alignment of each stage with the teacher after phase 1"></svg>
+    <p class="hint" id="alignText"></p>
+  </div>
+</section>
+
+<section id="results">
+  <h2>Results</h2>
+  <p>Dataset: <b>Imagenette</b>, 10 easy ImageNet classes (9,469 training and 3,925 validation images). Three seeds, paired: within a seed, the runs with and without phase 1 share the same data order, augmentations and fine-tuning schedule. Accuracy is top-1 on the 10 classes, at the last epoch. For reference, the teacher (not fine-tuned on Imagenette) reaches 99.2%.</p>
+  <div class="panel">
+    <div class="controls"><span class="seg" role="group" aria-label="Comparison">
+      <button type="button" data-cmp="same" aria-pressed="true">Same fine-tuning schedule</button>
+      <button type="button" data-cmp="time" aria-pressed="false">Similar total training time</button>
+    </span></div>
+    <svg class="fig" id="figRes" viewBox="0 0 640 260" role="img" aria-label="Top-1 accuracy per seed for each training arm"></svg>
+    <p class="hint" id="resText"></p>
+  </div>
+  <div class="two">
+    <div class="stat"><b>70.2%</b><span>best student, 10-way top-1 (phase 1 + 12 fine-tuning epochs, mean of 3 seeds)</span></div>
+    <div class="stat"><b>7.0–7.5%</b><span>neurons firing per time step with phase 1, vs 9.0–9.3% without</span></div>
+  </div>
+</section>
+
+<section id="limits">
+  <h2>Limits</h2>
+  <ul class="list">
+    <li>The runs with phase 1 also trained longer, so the comparison at equal fine-tuning schedule does not isolate the effect of distillation; at similar total time the gap shrinks to 1.15–1.45 points, with different learning-rate schedules.</li>
+    <li>Three seeds only bound the sign of the differences, not their size.</li>
+    <li>The validation set had been looked at during preliminary runs; there is no independent test set.</li>
+    <li>The teacher is not fine-tuned on Imagenette while the student is, so the gap between them is not an equal comparison.</li>
+    <li>One dataset of 10 classes, one teacher, one value of T; energy figures are estimates, not measurements.</li>
+    <li>The channel-41 observation is a co-occurrence on 262 images, not a proven cause. A plausible reading, untested, is that phase 1 mainly works as a good initialisation (for example of the BatchNorm statistics) rather than as an accurate copy.</li>
+  </ul>
+  <p>Code private for now · report and paper drafts on request.</p>
+</section>
+<div class="dash"></div>
+</main>
+<footer><div class="wrap">All numbers come from the project's logs and report. The neuron simulator and the energy calculator compute the stated formulas in the browser.</div></footer>
+<div class="tip" id="tip" role="status"></div>
+
+<script>
+const NS = "http://www.w3.org/2000/svg";
+const C = { c0: "#f1f4e6", c1: "#c3ccb0", c2: "#66734f", c3: "#33402a", c4: "#10150d" };
+function el(tag, attrs, parent, text) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text; if (parent) parent.appendChild(e); return e; }
+const tip = document.getElementById("tip");
+function hover(node, html) { node.addEventListener("pointermove", ev => { tip.innerHTML = html; tip.style.display = "block";
+  tip.style.left = Math.min(ev.clientX + 14, innerWidth - 270) + "px"; tip.style.top = (ev.clientY + 14) + "px"; });
+  node.addEventListener("pointerleave", () => { tip.style.display = "none"; }); }
+function seg(selector, attr, cb) { const btns = document.querySelectorAll(selector + " button");
+  btns.forEach(b => b.addEventListener("click", () => { btns.forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false")); cb(b.dataset[attr]); })); }
+function clear(s) { while (s.firstChild) s.removeChild(s.firstChild); }
+
+/* ---------- 1. LIF neuron (exact equations: tau = 2, Vth = 1, soft reset) ---------- */
+const xIn = document.getElementById("xIn"), tIn = document.getElementById("tIn"), figLIF = document.getElementById("figLIF");
+function drawLIF() {
+  clear(figLIF);
+  const X = +xIn.value, T = +tIn.value, tau = 2, vth = 1;
+  let V = 0; const H = [], S = [];
+  for (let t = 0; t < T; t++) { const h = V + (X - V) / tau, s = h >= vth ? 1 : 0; H.push(h); S.push(s); V = h - vth * s; }
+  const L = 60, R = 620, top = 20, B = 160, ymax = Math.max(2, X * 1.05), dx = (R - L) / T;
+  const Y = v => B - v / ymax * (B - top);
+  el("line", { x1: L, y1: B, x2: R, y2: B, stroke: C.c4, "stroke-width": 2 }, figLIF);
+  el("line", { x1: L, y1: Y(vth), x2: R, y2: Y(vth), stroke: C.c2, "stroke-width": 2, "stroke-dasharray": "6 5" }, figLIF);
+  el("text", { x: L - 8, y: Y(vth) + 4, "text-anchor": "end", "font-size": 11 }, figLIF, "Vth");
+  el("text", { x: L - 8, y: B + 4, "text-anchor": "end", "font-size": 11 }, figLIF, "0");
+  el("text", { x: 8, y: top, "font-size": 11 }, figLIF, "potential");
+  H.forEach((h, t) => { const x = L + dx * (t + .5);
+    const b = el("rect", { x: x - Math.min(18, dx * .3), y: Y(h), width: Math.min(36, dx * .6), height: B - Y(h), fill: S[t] ? C.c4 : C.c1, stroke: C.c4, "stroke-width": 1.5 }, figLIF);
+    hover(b, `step ${t + 1}: H = ${h.toFixed(3)}${S[t] ? " ≥ 1 → spike, then reset to " + (h - 1).toFixed(3) : " < 1 → no spike"}`);
+    el("text", { x, y: B + 16, "text-anchor": "middle", "font-size": 11 }, figLIF, t + 1);
+    el("rect", { x: x - 5, y: 212, width: 10, height: S[t] ? 26 : 3, fill: C.c4 }, figLIF); });
+  el("text", { x: 8, y: 232, "font-size": 11 }, figLIF, "spikes");
+  const n = S.reduce((a, b) => a + b, 0);
+  document.getElementById("xOut").textContent = X.toFixed(2); document.getElementById("tOut").textContent = T;
+  document.getElementById("lifText").textContent = `${n} spike${n === 1 ? "" : "s"} in ${T} steps (firing rate ${(n / T * 100).toFixed(0)}%). Over many steps the rate tracks the input strength; with only 4 steps the neuron can express just 5 levels (0 to 4 spikes). Dark bars: the potential crossed the threshold.`;
+}
+xIn.addEventListener("input", drawLIF); tIn.addEventListener("input", drawLIF); drawLIF();
+
+/* ---------- 2. Energy calculator (counts from the profiler) ---------- */
+const mac = document.getElementById("macIn"), ac = document.getElementById("acIn"), figE = document.getElementById("figE");
+function drawE() {
+  clear(figE);
+  const pm = +mac.value, pa = +ac.value;
+  const teacher = 1.254e9 * pm * 1e-9, sMac = 29.67e6 * pm * 1e-9, sAc = 427.9e6 * pa * 1e-9, student = sMac + sAc; // mJ
+  const L = 150, R = 600, mx = Math.max(teacher, student) * 1.1, X = v => L + v / mx * (R - L);
+  [["Teacher (ViT)", [[teacher, C.c4, "MAC"]], 40], ["Spiking student", [[sMac, C.c4, "MAC"], [sAc, C.c2, "AC"]], 105]].forEach(([n, parts, y]) => {
+    el("text", { x: L - 10, y: y + 18, "text-anchor": "end", "font-size": 13 }, figE, n);
+    let x0 = L; parts.forEach(([v, c, k]) => { const r = el("rect", { x: x0, y, width: Math.max(X(v) - L, 1.5), height: 28, fill: c }, figE);
+      hover(r, `${n}: ${k} ${v.toFixed(3)} mJ`); x0 += X(v) - L; });
+    const tot = parts.reduce((a, p) => a + p[0], 0);
+    el("text", { x: x0 + 8, y: y + 19, "font-size": 13, "font-weight": 700 }, figE, tot.toFixed(2) + " mJ");
+  });
+  document.getElementById("macOut").textContent = pm.toFixed(1); document.getElementById("acOut").textContent = pa.toFixed(2);
+  document.getElementById("eText").textContent = `Teacher: 1.254 G MACs. Student: 29.7 M MACs (patch embedding and readout, dark) + 427.9 M ACs (green). Ratio ≈ ${(teacher / student).toFixed(1)}× with these costs (11.1× with the default 4.6 and 0.9 pJ).`;
+}
+mac.addEventListener("input", drawE); ac.addEventListener("input", drawE); drawE();
+
+/* ---------- 3. Architecture (clickable) ---------- */
+const ARCH = [
+  { k: "patch", x: 10, w: 110, t: "Patch embedding", d: "Kept from the teacher, non-spiking and frozen: the 224×224 image becomes 196 patch tokens plus a class token (197 tokens of size 192), computed once per image." },
+  { k: "enc", x: 140, w: 100, t: "Spike encoder", d: "Stage 0. The token map is repeated over the 4 steps, normalised (BatchNorm) and turned into spikes by ON/OFF neurons: one neuron fires for positive values, another for negative ones." },
+  { k: "blocks", x: 260, w: 220, t: "12 spiking blocks", d: "Each block keeps a real-valued residual stream h and turns it into spikes before each sub-layer (membrane shortcut): h' = h + SSA(spikes(h)), then h_out = h' + MLP(spikes(h')). So every weight layer after the embedding receives 0/1 inputs." },
+  { k: "ssa", x: 300, w: 140, t: "Spiking self-attention", d: "Softmax-free attention: Q, K and V are themselves spike maps, and the output is Q(KᵀV) scaled by 0.125 and passed through spiking neurons. No exponentials, no division." },
+  { k: "head", x: 500, w: 130, t: "Classifier", d: "Applied to the class token at each of the 4 steps; the logits are averaged over time to give the prediction." }];
+const figArch = document.getElementById("figArch"), archText = document.getElementById("archText");
+function drawArch(sel) {
+  clear(figArch);
+  ARCH.forEach(a => { if (a.k === "ssa") return;
+    const g = el("g", { tabindex: 0, role: "button", "aria-label": a.t, style: "cursor:pointer" }, figArch);
+    el("rect", { x: a.x, y: 40, width: a.w, height: 100, fill: sel === a.k ? C.c4 : C.c0, stroke: C.c4, "stroke-width": 3 }, g);
+    const words = a.k === "blocks" ? [a.t] : a.t.split(" ");
+    words.forEach((w, i) => el("text", { x: a.x + a.w / 2, y: a.k === "blocks" ? 62 : 90 - (words.length - 1) * 8 + i * 16, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: sel === a.k ? C.c0 : C.c4 }, g, w));
+    g.addEventListener("click", () => drawArch(a.k)); g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); drawArch(a.k); } }); });
+  const s = ARCH[3], g = el("g", { tabindex: 0, role: "button", "aria-label": s.t, style: "cursor:pointer" }, figArch);
+  el("rect", { x: s.x, y: 78, width: s.w, height: 46, fill: sel === "ssa" ? C.c2 : C.c1, stroke: C.c4, "stroke-width": 2 }, g);
+  el("text", { x: s.x + s.w / 2, y: 105, "text-anchor": "middle", "font-size": 11, "font-weight": 700, fill: C.c4 }, g, "SSA · MLP  ×12");
+  g.addEventListener("click", () => drawArch("ssa")); g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); drawArch("ssa"); } });
+  [[120, 140], [240, 260], [480, 500]].forEach(([a, b]) => el("path", { d: `M${a},90 L${b - 2},90 M${b - 8},84 L${b - 2},90 L${b - 8},96`, stroke: C.c4, "stroke-width": 3, fill: "none" }, figArch));
+  el("text", { x: 65, y: 172, "text-anchor": "middle", "font-size": 11, fill: C.c3 }, figArch, "real values");
+  el("text", { x: 435, y: 172, "text-anchor": "middle", "font-size": 11, fill: C.c3 }, figArch, "0/1 spikes, 4 time steps");
+  el("line", { x1: 140, y1: 152, x2: 630, y2: 152, stroke: C.c3, "stroke-width": 2, "stroke-dasharray": "4 4" }, figArch);
+  el("text", { x: 320, y: 25, "text-anchor": "middle", "font-size": 12 }, figArch, "image → tokens → spikes → prediction");
+  const a = ARCH.find(x => x.k === sel); archText.innerHTML = `<b>${a.t}.</b> ${a.d}`;
+}
+drawArch("blocks");
+
+/* ---------- 4. Phase 1 walk-through ---------- */
+const stIn = document.getElementById("stIn"), figStage = document.getElementById("figStage");
+function drawStage() {
+  clear(figStage);
+  const s = +stIn.value, w = 40;
+  for (let i = 0; i <= 12; i++) { const x = 20 + i * 46, state = s === 13 ? "p2" : i < s ? "frozen" : i === s ? "train" : "todo";
+    const fill = { p2: C.c4, frozen: C.c2, train: C.c4, todo: C.c0 }[state];
+    el("rect", { x, y: 40, width: w, height: 56, fill, stroke: C.c4, "stroke-width": 3 }, figStage);
+    el("text", { x: x + w / 2, y: 74, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: state === "todo" ? C.c4 : C.c0 }, figStage, i === 0 ? "enc" : i);
+  }
+  el("text", { x: 20, y: 25, "font-size": 12 }, figStage, s === 13 ? "Phase 2: all stages trained together on the labels" : `Phase 1, stage ${s}: fit to the teacher's hidden state ${s === 0 ? "after the encoder" : "after block " + s}`);
+  el("text", { x: 20, y: 124, "font-size": 11, fill: C.c3 }, figStage, s === 13 ? "loss = 0.3·CE(labels) + 0.7·τ²·KL(teacher ‖ student), τ = 4" : "loss = MSE(time-averaged student stream, teacher); 2 epochs per stage");
+  document.getElementById("stOut").textContent = s === 13 ? "phase 2" : s;
+  document.getElementById("stText").textContent = s === 13
+    ? "Phase 2 fine-tunes every spiking parameter end to end with backpropagation through the 4 time steps, for 5 or 12 epochs."
+    : "The input of the stage comes from the already-trained, frozen prefix; only the current stage keeps its computation graph, which keeps memory small enough for a laptop. Phase 1 took about 1.5 h per seed.";
+}
+stIn.addEventListener("input", drawStage); drawStage();
+
+/* ---------- 5. Alignment diagnostic (real values) ---------- */
+const AL = { mse: [0.148, 0.349, 0.356, 0.318, 0.337, 0.313, 0.401, 0.480, 22.06, 21.01, 20.01, 19.10, 18.25],
+  rho: [0.22, 0.60, 0.85, 1.15, 1.17, 1.19, 1.16, 1.11, 0.91, 0.85, 0.80, 0.75, 0.71],
+  ch: [0.01, 0.06, 0.13, 0.16, 0.16, 0.12, 0.09, 0.09, 0.96, 0.95, 0.93, 0.92, 0.90] };
+const figAlign = document.getElementById("figAlign");
+function drawAlign(m) {
+  clear(figAlign);
+  const v = AL[m], L = 60, R = 620, T = 15, B = 180, dx = (R - L) / 13;
+  const Y = m === "mse" ? (x => B - (Math.log10(x) + 1) / (Math.log10(40) + 1) * (B - T)) : m === "rho" ? (x => B - x / 1.4 * (B - T)) : (x => B - x * (B - T));
+  const ticks = m === "mse" ? [0.1, 1, 10] : m === "rho" ? [0, 0.5, 1] : [0, 0.5, 1];
+  ticks.forEach(t => { el("line", { x1: L, y1: Y(t), x2: R, y2: Y(t), stroke: (m === "rho" && t === 1) ? C.c2 : C.c1, "stroke-width": (m === "rho" && t === 1) ? 2 : 1, "stroke-dasharray": (m === "rho" && t === 1) ? "6 5" : "" }, figAlign);
+    el("text", { x: L - 8, y: Y(t) + 4, "text-anchor": "end", "font-size": 11 }, figAlign, m === "ch" ? (t * 100) + "%" : t); });
+  if (m === "rho") el("text", { x: R, y: Y(1) - 6, "text-anchor": "end", "font-size": 11 }, figAlign, "trivial per-channel-mean predictor");
+  v.forEach((x, i) => { const cx = L + dx * (i + .5), bad = m === "rho" && x > 1;
+    const r = el("rect", { x: cx - 13, y: Y(x), width: 26, height: B - Y(x), fill: bad ? C.c2 : C.c4 }, figAlign);
+    hover(r, `${i === 0 ? "encoder (stage 0)" : "block " + i}: absolute MSE ${AL.mse[i]}, relative error ${AL.rho[i]}, channel 41 share ${(AL.ch[i] * 100).toFixed(0)}%`);
+    el("text", { x: cx, y: B + 15, "text-anchor": "middle", "font-size": 11 }, figAlign, i === 0 ? "enc" : i); });
+  el("text", { x: (L + R) / 2, y: B + 34, "text-anchor": "middle", "font-size": 11 }, figAlign, "stage");
+  document.getElementById("alignText").textContent = {
+    rho: "Uneven: good for the encoder (0.22), worse than the trivial predictor for blocks 3–7 (1.11–1.19, green), better again for blocks 8–12 (0.71–0.91).",
+    mse: "The absolute error jumps from 0.48 at block 7 to 22 at block 8, while the relative error does not: the jump is a change of scale, not of quality.",
+    ch: "From block 8 onward, a single teacher channel (number 41) carries 90–96% of the student's error. This co-occurs with the jump; it is not shown to cause it. An unnormalised error can mislead when one channel dominates." }[m];
+}
+seg('[aria-label="Alignment measure"]', "m", drawAlign); drawAlign("rho");
+
+/* ---------- 6. Three-seed results (real) ---------- */
+const RES = { "P1 + 5 ep": [61.61, 61.17, 60.84], "FT 5 ep": [48.33, 47.90, 48.46], "P1 + 12 ep": [70.57, 69.58, 70.42], "FT 12 ep": [60.18, 59.72, 59.69] };
+const TIME = { "P1 + 5 ep": "2.7–3.1 h", "FT 5 ep": "1.4 h", "P1 + 12 ep": "4.7–4.8 h", "FT 12 ep": "3.2–3.3 h" };
+const figRes = document.getElementById("figRes");
+function drawRes(cmp) {
+  clear(figRes);
+  const pairs = cmp === "same" ? [["P1 + 5 ep", "FT 5 ep"], ["P1 + 12 ep", "FT 12 ep"]] : [["P1 + 5 ep", "FT 12 ep"]];
+  const L = 60, R = 620, T = 15, B = 200, lo = 40, hi = 75, Y = v => B - (v - lo) / (hi - lo) * (B - T);
+  [40, 50, 60, 70].forEach(v => { el("line", { x1: L, y1: Y(v), x2: R, y2: Y(v), stroke: C.c1 }, figRes); el("text", { x: L - 8, y: Y(v) + 4, "text-anchor": "end", "font-size": 11 }, figRes, v + "%"); });
+  const arms = pairs.flat(), gap = (R - L) / arms.length;
+  arms.forEach((a, j) => { const cx = L + gap * (j + .5), v = RES[a], m = v.reduce((x, y) => x + y) / 3, p1 = a.startsWith("P1");
+    el("rect", { x: cx - 30, y: Y(m), width: 60, height: B - Y(m), fill: p1 ? C.c4 : C.c2, opacity: .9 }, figRes);
+    v.forEach((x, k) => { const d = el("circle", { cx: cx - 16 + k * 16, cy: Y(x), r: 5, fill: C.c0, stroke: C.c4, "stroke-width": 2 }, figRes);
+      hover(d, `${a}, seed ${k}: ${x.toFixed(2)}%`); });
+    el("text", { x: cx, y: Y(m) - 12, "text-anchor": "middle", "font-size": 12, "font-weight": 700 }, figRes, m.toFixed(2) + "%");
+    el("text", { x: cx, y: B + 16, "text-anchor": "middle", "font-size": 12 }, figRes, a);
+    el("text", { x: cx, y: B + 31, "text-anchor": "middle", "font-size": 10, fill: C.c3 }, figRes, TIME[a]); });
+  document.getElementById("resText").textContent = cmp === "same"
+    ? "With the same fine-tuning schedule, adding phase 1 helps in every seed: +12.98 ± 0.51 points at 5 epochs and +10.33 ± 0.44 at 12 epochs. But those runs also trained longer (phase 1 ≈ 1.5 h). P1 = phase 1, FT = fine-tuning only; dots are seeds."
+    : "At roughly similar total time (phase 1 + 5 epochs ≈ 2.7–3.1 h vs 12 epochs without it ≈ 3.2–3.3 h), the gain shrinks to +1.15 to +1.45 points, and the learning-rate schedules differ. Most of the gap is recovered by fine-tuning longer.";
+}
+seg('[aria-label="Comparison"]', "cmp", drawRes); drawRes("same");
+</script>
+</body>
+</html>
