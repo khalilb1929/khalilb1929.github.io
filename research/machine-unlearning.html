@@ -49,27 +49,6 @@
     <div class="stat"><b>1</b><span>study fully prepared but never run (PCGrad)</span></div>
   </div>
 
-  <h3>Timeline</h3>
-  <p class="timeline-note">Click a step to open the corresponding study below.</p>
-  <div class="scroll"><table class="data" id="timeline">
-    <thead><tr><th>Date (2026)</th><th>What happened</th></tr></thead>
-    <tbody>
-      <tr><td>early Oct.</td><td><a href="#s01">Original study (v3)</a>: “success” only through collapsed models; <a href="#s02">post hoc diagnostics</a> point at BatchNorm.</td></tr>
-      <tr><td>13–14 Oct.</td><td>Everything moved into one repository; <a href="#s03">replication v1.3</a> on Fashion-MNIST and CIFAR-10.</td></tr>
-      <tr><td>14–15 Oct.</td><td><a href="#s05">BatchNorm study v1.0</a> (A vs E1 vs E1D, two amendments before the main run).</td></tr>
-      <tr><td>15 Oct.</td><td><a href="#s06">Control of C on CIFAR-10</a>; <a href="#s04">NegGrad+ vs random labels</a> with the clipping burden.</td></tr>
-      <tr><td>16 Oct.</td><td><a href="#s08">Continuous gradient measure</a>: the NegGrad+-specific signature.</td></tr>
-      <tr><td>16–17 Oct.</td><td><a href="#s09">Tiny ImageNet extension</a> with a membership-inference check.</td></tr>
-      <tr><td>17 Oct.</td><td>PCGrad trade-off study frozen (protocol, analysis, calibration, notebook), <b>never run</b>.</td></tr>
-      <tr><td>17–18 Oct.</td><td><a href="#s07">Concentration study</a>: 68 mixes separate concentration from class difficulty.</td></tr>
-      <tr><td>18–19 Oct.</td><td><a href="#s10">Source of the statistics (v1.2)</a>, after a calibration step that ruled out one test.</td></tr>
-      <tr><td>19 Oct.</td><td><a href="#s11">Frozen alternative target</a>, seeds raised from 10 to 12 by the power simulation.</td></tr>
-      <tr><td>19–20 Oct.</td><td><a href="#s12">Bundled BatchNorm fix (RD64)</a>.</td></tr>
-      <tr><td>20 Oct.</td><td><a href="#s13">Per-class tuning</a>, the last experiment.</td></tr>
-      <tr><td>20–21 Oct.</td><td>Write-up, <a href="#checked">audit</a> of code, analyses and numbers, and one correction (<a href="#trap">collapse vs BatchNorm statistics</a>).</td></tr>
-    </tbody>
-  </table></div>
-
   <div class="two">
     <div>
       <h3>What is settled</h3>
@@ -905,12 +884,11 @@ function tQ(q, df) { let lo = 0, hi = 100; for (let i = 0; i < 100; i++) { const
   lam.addEventListener("input", drawM); drawM();
 })();
 
-/* ---------- Timeline links open the study they point to ---------- */
+/* ---------- A #sNN link in the URL opens that study ---------- */
 function openFromHash() {
   const d = location.hash && location.hash.length > 1 && document.querySelector(location.hash);
   if (d && d.matches("details.study")) { d.hidden = false; d.open = true; d.scrollIntoView({ block: "start" }); }
 }
-document.querySelectorAll('#timeline a[href^="#s"]').forEach(a => a.addEventListener("click", e => { e.preventDefault(); history.replaceState(null, "", a.getAttribute("href")); openFromHash(); }));
 openFromHash();
 
 /* ---------- Study filters ---------- */

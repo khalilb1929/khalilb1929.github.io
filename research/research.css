@@ -138,7 +138,6 @@ details.study > summary:focus-visible { outline: 3px dashed var(--c4); outline-o
 .study-body dd { margin: 0; }
 @media (max-width: 600px) { .study-body dl { grid-template-columns: 1fr; } .study-body dt { margin-top: 6px; } details.study > summary { grid-template-columns: 2em 1fr; } details.study > summary .badge { grid-column: 2; justify-self: start; } }
 .timeline-note { font-size: 13px; color: var(--c3); }
-#timeline td:first-child, #timeline th:first-child { white-space: nowrap; }
 
 footer { padding: 40px 0 60px; font-size: 13px; color: var(--c3); }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; animation: none !important; } }
