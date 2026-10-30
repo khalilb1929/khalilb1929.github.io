@@ -20,202 +20,58 @@
     <p>Machine unlearning removes the influence of some training examples without retraining from scratch. I studied a popular shortcut, <strong>NegGrad+</strong>, and found that it becomes unreliable when the examples to forget all come from <strong>the same class</strong>.</p>
   </div>
   <ul class="toc">
-    <li><a href="#status">0 · Where the project stands</a></li>
-    <li><a href="#basics">★ The basics, from zero</a></li>
-    <li><a href="#setting">1 · The setting</a></li>
-    <li><a href="#why">2 · Why it can run away</a></li>
-    <li><a href="#findings">3 · What I found</a></li>
-    <li><a href="#fixes">4 · Can it be avoided?</a></li>
-    <li><a href="#trap">5 · A measurement trap</a></li>
-    <li><a href="#evidence">★ Is it real, and is it BatchNorm?</a></li>
-    <li><a href="#studies">6 · Every study, in order</a></li>
-    <li><a href="#defs">7 · Definitions</a></li>
-    <li><a href="#method">8 · How it was done</a></li>
-    <li><a href="#checked">9 · How it was checked</a></li>
-    <li><a href="#lessons">10 · Lessons and limits</a></li>
+    <li><a href="#goal">Goal</a></li>
+    <li><a href="#setup">1 · Setup</a></li>
+    <li><a href="#step1">2 · Original study &amp; diagnostics</a></li>
+    <li><a href="#step2">3 · Replication</a></li>
+    <li><a href="#step3">4 · Which part of BatchNorm?</a></li>
+    <li><a href="#step4">5 · Concentration or hard classes?</a></li>
+    <li><a href="#step5">6 · Is it the objective?</a></li>
+    <li><a href="#step6">7 · Remedies</a></li>
+    <li><a href="#evidence">★ Putting it together</a></li>
+    <li><a href="#limits">8 · Limits</a></li>
+    <li><a href="#studies">Appendix · All studies</a></li>
   </ul>
 </div></header>
 
 <main class="wrap">
 
-<section id="status">
-  <h2>Where the project stands</h2>
+<section id="goal">
+  <h2>Goal</h2>
+  <p>I try to show that <b>NegGrad+ becomes unstable in BatchNorm networks when the set to forget is concentrated in a single class</b>, whereas a <b>stratified</b> set of the same size causes no problem. Then I look for which part of BatchNorm is responsible, whether the NegGrad+ objective plays a role, and whether the problem can be fixed. The page follows the written report step by step; the interactive figures let you play with each idea.</p>
   <div class="two">
     <div>
       <h3>What is settled</h3>
       <ul class="list">
-        <li>In these BatchNorm networks, concentrated deletion requests make NegGrad+ unreliable; spread ones of the same size do not.</li>
-        <li>The effect goes beyond the difficulty of the classes involved, and is far stronger under NegGrad+ than under a bounded control.</li>
-        <li>The fixes tried (BatchNorm changes, a bounded target, per-class tuning) protect accuracy, but mostly by forgetting less.</li>
+        <li>Concentrated deletion requests make NegGrad+ unstable in these BatchNorm networks; spread ones of the same size do not.</li>
+        <li>The effect needs normalisation by batch statistics: it disappears with BatchNorm frozen or with GroupNorm.</li>
+        <li>It goes beyond the difficulty of the classes involved, and it is far stronger under NegGrad+'s unbounded objective.</li>
+        <li>The fixes tried remove the instability, but mostly by forgetting less.</li>
       </ul>
     </div>
     <div>
       <h3>What is still open</h3>
       <ul class="list">
-        <li>Why: BatchNorm is the main suspect, but no study isolated a mechanism.</li>
+        <li>The exact mechanism: BatchNorm is the main suspect, not a proven culprit.</li>
         <li>Whether any method can forget a concentrated request as well as retraining does, without breaking the model.</li>
-        <li>Whether any of this measures real erasure or privacy: it was never tested.</li>
+        <li>Whether anything is truly erased: never measured beyond one exploratory attack.</li>
         <li>How far it generalises beyond a small CNN on Fashion-MNIST.</li>
       </ul>
     </div>
   </div>
-
-  <h3>What I would do next <span class="timeline-note">(ideas, none of them run)</span></h3>
-  <ol class="steps">
-    <li><b>Run the PCGrad study</b> already frozen on 17 October: does resolving conflicts between the “keep” and “forget” gradients improve the trade-off?</li>
-    <li><b>Swap BatchNorm for GroupNorm or LayerNorm across the whole chain</b>: so far GroupNorm was tested only in the replication (where the effect vanished), never with the fixes or the forgetting measures.</li>
-    <li><b>Measure forgetting properly</b> for the fixes (membership inference, distance to the retrained model), since they may only look good because they act weakly.</li>
-    <li><b>Try other unlearning methods</b> on concentrated requests, to see whether the problem is specific to NegGrad+.</li>
-    <li><b>Predict risky requests</b>: check on existing data whether simple batch statistics, computed before unlearning, flag the requests that will fail.</li>
-    <li><b>Close the gaps of the audit</b>: replay the original study with recalibrated evaluation, and recover the raw Tiny ImageNet tables.</li>
-  </ol>
 </section>
 
-<section id="basics">
-  <h2>The basics, from zero</h2>
-  <p>Everything you need to follow the rest of the page, with no prior knowledge: what the model is, how it learns, what BatchNorm does, and the statistics behind every number.</p>
+<!-- =============================== 1. SETUP =============================== -->
+<section id="setup">
+  <h2>1 · Experimental setup</h2>
 
-  <h3 id="b-net">1 · An image classifier gives a score to each class</h3>
-  <p>The model looks at a 28×28 grey image and outputs 10 numbers, one per class (t-shirt, trouser, …, ankle boot). These raw scores are called <b>logits</b>. The <b>softmax</b> turns them into probabilities that add up to 1: <code>p<sub>k</sub> = e<sup>z<sub>k</sub></sup> / Σ<sub>j</sub> e<sup>z<sub>j</sub></sup></code>. The error on one image is the <b>cross-entropy</b> <code>−log p<sub>true</sub></code>: close to 0 when the model is confident and right, very large when it gives the true class a tiny probability.</p>
-  <div class="panel">
-    <h3>Try it: three classes</h3>
-    <div class="controls">
-      <label>boot <input id="z0" type="range" min="-4" max="6" step="0.1" value="3" style="width:150px"></label>
-      <label>sneaker <input id="z1" type="range" min="-4" max="6" step="0.1" value="1" style="width:150px"></label>
-      <label>sandal <input id="z2" type="range" min="-4" max="6" step="0.1" value="0" style="width:150px"></label>
-    </div>
-    <svg class="fig" id="figSoft" viewBox="0 0 640 170" role="img" aria-label="Logits turned into probabilities by the softmax"></svg>
-    <p class="hint" id="softText"></p>
-  </div>
-
-  <h3 id="b-cnn">2 · The network used: a small CNN with BatchNorm</h3>
-  <p>A <b>convolutional neural network</b> slides small 3×3 filters over the image to detect local patterns (edges, then textures, then shapes). The one used in almost every study has 1.7 million parameters. Click a layer.</p>
-  <div class="panel">
-    <svg class="fig" id="figCNN" viewBox="0 0 640 200" role="img" aria-label="Layers of the CNN, clickable"></svg>
-    <p class="hint" id="cnnText"></p>
-  </div>
-  <p>The original model <b>O</b> is trained for 15 passes over the 55,000 images (epochs), in batches of 128, with stochastic gradient descent (learning rate 0.05 decreasing along a cosine curve, momentum 0.9, weight decay 5·10⁻⁴). It reaches about 93% accuracy on the 10,000 test images. A fresh <b>O</b> is trained for every seed.</p>
-
-  <h3 id="b-learn">3 · How a network learns, and how unlearning hijacks it</h3>
-  <p>Training repeats one move thousands of times: compute the error on a batch, compute its <b>gradient</b> (the direction in which each parameter would increase the error), and take a small step the other way: <code>θ ← θ − η·gradient</code>, where η is the <b>learning rate</b>. Unlearning reuses the same machinery for one epoch (425 steps) on the data to keep, in batches of 128, each step paired with a batch of 64 images to forget:</p>
+  <h3 id="s-data">1.1 Data and notation</h3>
   <ul class="list">
-    <li><b>Fine-tuning</b> (reference): keep training on the data to keep only.</li>
-    <li><b>NegGrad+</b>: minimise <code>α·error(keep) − (1−α)·error(forget)</code>, i.e. also climb the error on the data to forget. The forget weight 1−α is small (0.001, 0.01 or 0.05) because climbing is dangerous.</li>
-    <li><b>Safety belt</b>: if the gradient is longer than 5, it is shortened to 5 (gradient clipping).</li>
-    <li><b>Retrained model R</b>: trained from scratch without the forgotten images; the ideal everyone tries to approach.</li>
+    <li><b>Fashion-MNIST</b>: 60,000 training images (28×28, greyscale, 10 classes). 5,000 are set aside for validation (500 per class), so |D| = 55,000. The 10,000 test images are used for evaluation only.</li>
+    <li><b>D_f</b>: the set to forget, always <b>600 images</b>. <b>D_r</b> = D \ D_f: the set to keep.</li>
+    <li><b>Concentrated</b> (c0 to c9): the 600 images all come from one class, about 11% of it. The rest of the class stays in D_r: the model should forget <em>these</em> 600 boots, not the concept of a boot. <b>Stratified</b>: 60 images from each class.</li>
+    <li><b>Reference model R</b>: retrained from scratch on D_r only, with the same recipe as O. It is what unlearning tries to approach without retraining.</li>
   </ul>
-
-  <h3 id="b-bn">4 · BatchNorm, and why a one-class batch is special</h3>
-  <p>Inside the network, each channel of each convolution produces numbers whose scale drifts during training. A <b>BatchNorm</b> layer recentres and rescales them using the statistics of the current batch: <code>x̂ = (x − mean) / √(variance + ε)</code>, then multiplies and shifts by two learned numbers. During training it uses the <b>batch's own</b> mean and variance and slowly updates a stored average (<code>stored ← 0.9·stored + 0.1·batch</code>); at test time it uses the stored average.</p>
-  <div class="panel">
-    <h3>Try it: one channel, one batch of 16 images</h3>
-    <div class="controls"><span class="seg" role="group" aria-label="Batch content">
-      <button type="button" data-b="mixed" aria-pressed="true">Mixed batch</button>
-      <button type="button" data-b="single" aria-pressed="false">One-class batch</button>
-    </span></div>
-    <svg class="fig" id="figBN" viewBox="0 0 640 250" role="img" aria-label="Values of one channel before and after BatchNorm"></svg>
-    <p class="hint" id="bnText"></p>
-    <p class="hint"><b>Illustration</b>: the 16 values are made up to show the arithmetic; the real network has 32 to 128 channels per layer.</p>
-  </div>
-  <p>Two consequences matter for this project. During NegGrad+, a one-class forget batch is normalised by its own unusual statistics, and the gradient flows through them. And the forget batches also pull the stored averages towards one class: if you then evaluate the model with those stored statistics, it can look broken. <b>Recalibration</b> means recomputing the stored statistics exactly on the data to keep, without touching any weight; most results here use it.</p>
-
-  <h3 id="b-bn2">4b · The two kinds of numbers inside BatchNorm</h3>
-  <p>Each BatchNorm layer works <b>channel by channel</b> (32, 64 or 128 channels here), and each channel holds two pairs of numbers that are updated in completely different ways.</p>
-  <div class="scroll"><table class="data">
-    <thead><tr><th></th><th>γ and β (scale and shift)</th><th>Stored mean and variance (“buffers”)</th></tr></thead>
-    <tbody>
-      <tr><td><b>Role</b></td><td>After normalising, the layer outputs <code>y = γ·x̂ + β</code>, so the network can re-stretch and re-shift the values if that helps.</td><td>Used to normalise at evaluation time, when there is no batch to compute statistics on (one test image alone has no meaningful “batch mean”).</td></tr>
-      <tr><td><b>How they change</b></td><td><b>Learned</b> by gradient descent, like every other weight.</td><td><b>Not learned.</b> They are <em>measured</em>: after each training-mode batch, <code>stored ← 0.9·stored + 0.1·batch statistic</code>. No gradient ever touches them.</td></tr>
-      <tr><td><b>Start</b></td><td>γ = 1, β = 0 (the layer only normalises).</td><td>mean = 0, variance = 1.</td></tr>
-    </tbody>
-  </table></div>
-  <p>The stored mean is a <b>moving average</b>. With batch means of 2.0, 2.2 and 1.8, it goes 0 → 0.20 → 0.40 → 0.54 → … and settles near 2.0. The newest batch counts for 10%, and a batch 20 steps old counts for about 1%, so the memory mostly reflects the last 10–20 batches.</p>
-  <div class="note"><b>Why concentrated requests corrupt it</b> (made-up numbers). After training, the stored mean of a channel is about 2.0. During NegGrad+ with implementation A, every forget batch also goes through BatchNorm in training mode. If a one-class batch of boots has a mean of 5.0 on that channel, one forget pass gives 0.9·2.0 + 0.1·5.0 = 2.30, the next retained pass pulls it back only to 2.27, and over 425 steps the memory drifts towards “an average boot”. At test time <em>every</em> image (t-shirts, bags…) is normalised with that drifted memory, so the model looks broken.</div>
-  <p><b>Recalibration, exactly.</b> It is not the 0.9 / 0.1 rule. A copy of the model is put in evaluation mode, without gradients; all the retained data D_r is passed through, and the <em>true</em> mean and variance over all images (the population moments) are written into the buffers. This is done <b>layer by layer, in order</b>, because fixing layer 1 changes what layer 2 receives. Weights, γ and β are never touched, and a blocking check makes sure the images to forget are never used.</p>
-
-  <h3 id="b-init">4c · Where the starting weights come from</h3>
-  <p>No custom initialisation was written: every model uses PyTorch's defaults, but with the randomness fixed just before the model is built (<code>torch.manual_seed(g_init)</code>), so the same seed always gives bit-identical starting weights.</p>
-  <ul class="list">
-    <li><b>Convolutions and dense layers</b>: each weight is drawn uniformly in ±1/√n, where n is the number of inputs of the neuron. The more inputs a neuron sums, the smaller each weight must be, otherwise the sum blows up. For this CNN: ±0.333 (first conv, 9 inputs), ±0.059 (second, 288), ±0.042 (third, 576), ±0.013 (first dense layer, 6,272), ±0.063 (output, 256). Convolutions have no bias: the β of the BatchNorm that follows plays that role.</li>
-    <li><b>BatchNorm</b>: γ = 1, β = 0, stored mean 0, stored variance 1.</li>
-    <li><b>Why it did not matter much</b>: “He” (Kaiming) initialisation uses a weight variance of 2/n so that the signal keeps the same variance from layer to layer through ReLUs. PyTorch's default gives 1/(3n), so without normalisation the variance would shrink by about 6× per layer. Here a BatchNorm follows every convolution and resets the scale to 1, so the shrinkage never accumulates; only the last two dense layers feel it.</li>
-    <li><b>Which seed for which model</b>: seeds are derived from names with SHA-256 (e.g. “prefix | seed 3 | init_O”), so every model gets its own independent randomness and nothing collides. The original model O has one seed for its weights and another for the order of images. Each retrained model R has its own initialisation seed per forget set, like a genuine retraining from scratch. Unlearning methods never re-initialise: they start from a <b>copy of O's trained weights</b>. This is what made bit-for-bit replays of the diagnostics possible.</li>
-  </ul>
-
-  <h3 id="b-fp">4d · Number formats: FP32, with two surprises</h3>
-  <p>Training runs in <b>FP32</b> (32-bit floats: about 7 significant digits, values up to 3.4·10³⁸). There is no half-precision training. Even NegGrad+'s explosions (forget loss up to about 10⁵) stay far from the FP32 ceiling.</p>
-  <ul class="list">
-    <li><b>Hidden TF32 on the A100.</b> On this GPU, PyTorch runs convolutions in TF32 by default: values are stored in FP32, but rounded to about 3 significant digits inside the multiplications. It is faster, slightly less exact, and the rounding errors add up from layer to layer. Two pilots stopped on unit tests whose tolerance (10⁻⁵ on the whole network) was too strict for this. The dated amendments set 10⁻⁵ for one layer and 10⁻⁴ relative for the full network. Deterministic cuDNN makes runs <em>reproducible</em>, not exact.</li>
-    <li><b>FP64 where precision matters.</b> Checks of the stored statistics, gradient norms (sums of millions of squares) and weight distances are computed in double precision (about 16 digits).</li>
-    <li><b>An FP16 overflow, in storage only.</b> To save space, some descriptive BatchNorm statistics were first <em>saved</em> in FP16, whose maximum is 65,504. In the pilot of the BatchNorm study, some values exceeded it and were stored as infinity; an amendment switched them to FP32. Probabilities stayed in FP16 since they lie between 0 and 1. Training and main measures were never affected.</li>
-  </ul>
-
-  <h3 id="b-stats">5 · The statistics, with the real data</h3>
-  <p>Every study is repeated with several <b>seeds</b>: a seed fixes all the randomness (initial weights, image order, which images are forgotten), so each seed is an independent rerun with its own model. One seed gives one number; the statistics are done on these numbers. Below are the 12 real values of the tuning study's penalty (how many more accuracy points concentrated requests cost than spread ones). Change how many seeds are used.</p>
-  <div class="panel">
-    <div class="controls"><label for="nSeeds">seeds used: <output id="nOut"></output></label><input id="nSeeds" type="range" min="2" max="12" step="1" value="12"></div>
-    <svg class="fig" id="figStats" viewBox="0 0 640 200" role="img" aria-label="Seed values, mean, confidence intervals and equivalence margin"></svg>
-    <div class="scroll"><table class="data" id="statTable"></table></div>
-    <p class="hint">Mean = average of the seeds. SD = how much seeds differ. Standard error SE = SD/√n, the uncertainty of the mean. The 95% confidence interval (CI) is mean ± t × SE, where t comes from Student's distribution with n−1 degrees of freedom. The t-statistic = mean / SE; the <b>p-value</b> is the chance of a t at least that large if the true penalty were 0. <b>Equivalence</b> (TOST): the 90% interval must lie inside a margin fixed in advance (±2 points). A result can be both “detected” (CI excludes 0) and “equivalent” (inside the margin): a real but small effect. (The values are rounded to 2 decimals here, so t may differ from the frozen analysis, 11.95, in the last digit.)</p>
-  </div>
-  <ul class="list">
-    <li><b>Why seeds, not images or runs?</b> The 11 runs of one seed (10 concentrated, 1 spread) all start from the same model O. If that O is a bit unusual, all 11 runs are. Counting them as 11 independent observations would fake precision, so each seed gives <b>one</b> number, and comparisons are <b>paired</b> within a seed (each seed is compared with itself, which removes the seed-to-seed variability).</li>
-    <li><b>Why a p-value, in words</b>: “if there were no effect, how often would chance alone give a result this strong?” p = 1.7·10⁻⁵ means about 2 times in 100,000.</li>
-    <li><b>Why Holm (the “p<sub>Holm</sub>” values)</b>: if you run 10 tests at the 5% level on effects that do not exist, the chance that at least one of them “succeeds” by luck is about 40%. Holm sorts the p-values and makes each test stricter (the smallest is multiplied by the number of tests, the next by one less, and so on), so that the chance of <em>any</em> false alarm in the family stays at 5%. Every study with several tests reports Holm-adjusted p-values.</li>
-    <li><b>Why TOST (equivalence)</b>: “no effect detected” does not mean “no effect”: with few seeds, a real effect can go unseen. TOST proves the opposite claim, that the effect is <em>smaller</em> than a margin fixed in advance (1 decade in the replication, ±2 points in the tuning study). It passes when the 90% interval lies entirely inside the margin. It is how GroupNorm and C were shown to have essentially no concentration effect, and how the tuned penalty (0.88–1.27) was shown to be small even though it is not zero.</li>
-    <li><b>Why a bootstrap sometimes</b>: when part of the model is estimated from the data (like λ in the concentration model), the usual Student table is no longer reliable. A parametric bootstrap simulates thousands of fake experiments with no effect, refits each one, and reads the p-value from how often a fake result is as extreme as the real one.</li>
-    <li><b>Power</b>: before a study, thousands of fake studies are simulated to find how many seeds are needed to detect a given effect at least 80% of the time (this is why studies use 12 or 14 seeds rather than 10). <b>Calibration</b>: the same simulations <em>without</em> any effect check that the test raises false alarms only about 5% of the time (upper Clopper–Pearson bound ≤ 0.07). This is what caught a flawed test in study 10 before it was used.</li>
-  </ul>
-
-  <h3 id="b-model">6 · The concentration model: entropy and power means</h3>
-  <p>To separate “concentrated” from “made of hard classes”, two tools were needed.</p>
-  <div class="panel">
-    <h3>Label entropy: how mixed is a forget set?</h3>
-    <div class="controls"><span class="seg" role="group" aria-label="Number of classes">
-      <button type="button" data-k="1" aria-pressed="true">1 class</button><button type="button" data-k="2" aria-pressed="false">2</button>
-      <button type="button" data-k="5" aria-pressed="false">5</button><button type="button" data-k="10" aria-pressed="false">10 classes</button>
-    </span></div>
-    <svg class="fig" id="figH" viewBox="0 0 640 120" role="img" aria-label="Class proportions and label entropy"></svg>
-    <p class="hint" id="hText"></p>
-  </div>
-  <div class="panel">
-    <h3>Power mean: many ways to combine two classes</h3>
-    <p class="hint">Suppose class A alone gives an early forget loss of 1 and class B alone gives 9. What should a 50/50 mix give? It depends on how difficulties combine; the power mean M<sub>λ</sub> = (½·1<sup>λ</sup> + ½·9<sup>λ</sup>)<sup>1/λ</sup> covers a whole family.</p>
-    <div class="controls"><label for="lam">λ = <output id="lamOut"></output></label><input id="lam" type="range" min="-3" max="3" step="0.1" value="0"></div>
-    <svg class="fig" id="figM" viewBox="0 0 640 110" role="img" aria-label="Power mean of two class difficulties"></svg>
-    <p class="hint" id="mText"></p>
-  </div>
-  <p>The study fitted, for each seed, <code>early loss = log₁₀ M<sub>λ</sub>(class mix) + γ·entropy + noise</code>, letting λ take its best value between −3 and 3. Whatever the combination rule, something was left over: <b>γ = −0.246</b> decade per bit. Going from 1 class (0 bits) to 10 classes (3.32 bits) therefore lowers the early forget loss by about 0.246 × 3.32 ≈ 0.82 decade, a factor of about 6.6, <em>beyond</em> what the classes themselves predict.</p>
-
-  <h3 id="b-values">7 · All the values, in plain words</h3>
-  <div class="scroll"><table class="data">
-    <thead><tr><th>Value</th><th>Study</th><th>What it means</th></tr></thead>
-    <tbody>
-      <tr><td class="num">26 / 55</td><td>original</td><td>runs ending at ≤ 20% accuracy, all concentrated: the “success” came from broken-looking models.</td></tr>
-      <tr><td class="num">29 / 30</td><td>diagnostic 2</td><td>concentrated tasks that diverged with the original implementation A; 0 / 30 with B or C.</td></tr>
-      <tr><td class="num">0.86</td><td>replication</td><td>share of concentrated runs more unstable than the paired spread run (0.5 would mean no difference).</td></tr>
-      <tr><td class="num">30 / 50</td><td>replication</td><td>concentrated runs that diverged at weight 0.01 (spread: never).</td></tr>
-      <tr><td class="num">62 / 100, 67 / 450</td><td>concentration</td><td>divergences with 1-class and 2-class forget sets; none with 5 or 10 classes.</td></tr>
-      <tr><td class="num">γ = −0.246</td><td>concentration</td><td>early forget loss falls by 0.246 decade per bit of mixing, beyond class difficulty (95% CI −0.263 to −0.228).</td></tr>
-      <tr><td class="num">0.705 vs 0.053</td><td>gradient measure</td><td>how much concentration raises the typical gradient size (decades) under NegGrad+ vs random labels: ≈5× vs ≈1.13×.</td></tr>
-      <tr><td class="num">0.652</td><td>gradient measure</td><td>their difference, positive in all 10 seeds (95% CI 0.607–0.696).</td></tr>
-      <tr><td class="num">0 / 60 / 150</td><td>BatchNorm study</td><td>E1 divergences out of 150 concentrated runs at weights 0.001 / 0.01 / 0.05: no single variant is a cure.</td></tr>
-      <tr><td class="num">0.0288</td><td>Tiny ImageNet</td><td>same gradient contrast on harder data: positive in every seed and class, but much smaller.</td></tr>
-      <tr><td class="num">0.388</td><td>Tiny ImageNet</td><td>membership-inference AUC for NegGrad+ (0.5 = chance): an inversion, not erasure.</td></tr>
-      <tr><td class="num">0.670</td><td>statistics source</td><td>how much borrowing retained-batch statistics changes the early loss of mixed vs one-class sets (decades).</td></tr>
-      <tr><td class="num">16.2</td><td>frozen target</td><td>extra concentration penalty of NegGrad+ over the bounded target (points); but the bounded target barely forgot.</td></tr>
-      <tr><td class="num">13.7</td><td>RD64</td><td>penalty removed by the bundled BatchNorm fix (points), in all 14 seeds; divergences 84 / 140 → 0 / 140.</td></tr>
-      <tr><td class="num">1.07 vs 14.2</td><td>tuning</td><td>penalty with per-class settings vs default settings (points); only 3 / 10 classes reached the retrained model's strength.</td></tr>
-      <tr><td class="num">10.8% → 74.2%</td><td>audit</td><td>mean test accuracy of “collapsed” runs before and after recomputing BatchNorm statistics (original model ≈ 93%).</td></tr>
-    </tbody>
-  </table></div>
-</section>
-
-<section id="setting">
-  <h2>The setting</h2>
-  <p>A small convolutional network is trained on <b>Fashion-MNIST</b> (55,000 photos of clothes, 10 classes). Then 600 of these photos must be forgotten. The gold standard is a model <b>retrained from scratch</b> without them; approximate methods try to get close to it much faster.</p>
-  <p>The question is simple: with the same number of photos to forget, does it matter whether they all come from one class (<b>concentrated</b>) or are spread evenly over the ten classes (<b>spread</b>)? In the concentrated case, the other photos of that class stay in the training data: the model should forget <em>these</em> 600 boots, not boots in general.</p>
-
   <div class="panel">
     <h3>Build a deletion request</h3>
     <div class="controls">
@@ -228,24 +84,308 @@
     <svg class="fig" id="figSet" viewBox="0 0 640 250" role="img" aria-label="The ten classes of the dataset, with the photos to forget highlighted"></svg>
     <p class="hint" id="setText"></p>
   </div>
-  <p>During unlearning, the photos to forget are fed to the network in batches of 64. Each <b>BatchNorm</b> layer rescales its signals using the mean and variance of the current batch. A concentrated request therefore produces batches made of a single class, whose statistics are very different from those of a normal, mixed batch. That turned out to matter.</p>
-</section>
 
-<section id="why">
-  <h2>Why NegGrad+ can run away</h2>
-  <p>NegGrad+ minimises <code>α·CE(keep) − (1−α)·CE(forget)</code>: it keeps practising on the data that stays, and pushes the error on the data to forget <em>up</em>. The error used is the cross-entropy, <code>CE = −log p</code>, where <code>p</code> is the probability the model gives to the true class.</p>
+  <h3 id="s-model">1.2 Model and training of O</h3>
+  <p>A small convolutional network: 3 blocks of 3×3 convolution (no bias) + BatchNorm + ReLU, with 32, 64 then 128 filters and two max-pooling layers, followed by two dense layers (256 then 10): about 1.7 M parameters and 3 BatchNorm layers. SGD, learning rate 0.05 with a cosine schedule, momentum 0.9, weight decay 5·10⁻⁴, 15 epochs, batches of 128, no augmentation: about <b>93%</b> test accuracy. One O per seed.</p>
+  <div class="panel">
+    <svg class="fig" id="figCNN" viewBox="0 0 640 200" role="img" aria-label="Layers of the CNN, clickable"></svg>
+    <p class="hint" id="cnnText"></p>
+  </div>
+  <p>The model outputs one raw score (<b>logit</b>) per class; the <b>softmax</b> turns them into probabilities, and the error on an image is the <b>cross-entropy</b> −log p<sub>true</sub>.</p>
+  <div class="panel">
+    <h3>Try it: three classes</h3>
+    <div class="controls">
+      <label>boot <input id="z0" type="range" min="-4" max="6" step="0.1" value="3" style="width:150px"></label>
+      <label>sneaker <input id="z1" type="range" min="-4" max="6" step="0.1" value="1" style="width:150px"></label>
+      <label>sandal <input id="z2" type="range" min="-4" max="6" step="0.1" value="0" style="width:150px"></label>
+    </div>
+    <svg class="fig" id="figSoft" viewBox="0 0 640 170" role="img" aria-label="Logits turned into probabilities by the softmax"></svg>
+    <p class="hint" id="softText"></p>
+  </div>
+
+  <h3 id="s-init">1.3 Weight initialisation</h3>
+  <p>No custom initialisation was written: every model uses <b>PyTorch's defaults</b> (no <code>nn.init</code> or <code>kaiming</code> call in the notebooks), with the seed fixed right before the model is built, so the same seed gives the same starting weights bit for bit.</p>
+  <ul class="list">
+    <li><b>Convolutions and dense layers</b>: weights drawn uniformly in ±1/√n, n being the number of inputs of the neuron, so Var(w) = 1/(3n). Convolutions have no bias; dense-layer biases are drawn in the same range.</li>
+    <li><b>BatchNorm</b>: γ = 1, β = 0 (learned parameters); stored mean 0 and stored variance 1 (buffers).</li>
+    <li><b>Why the variance matters</b>: if it grows from layer to layer, logits become huge (100% on one class, huge losses and gradients); if it shrinks, logits are all near 0 (about 10% per class, tiny gradients). Kaiming (He) uses Var(w) = 2/n to keep it constant through ReLUs; PyTorch's default is six times smaller.</li>
+    <li><b>Why it does not matter here</b>: a BatchNorm follows every convolution and resets the scale to 1, so the shrinkage never accumulates. Same for the ResNet-18 of step 2, skip connections included.</li>
+    <li>Unlearning methods start from a <b>copy of O</b>; each R has its own initialisation seed.</li>
+  </ul>
+
+  <h3 id="s-bn">1.4 BatchNorm</h3>
+  <p>BatchNorm works <b>per channel</b>: for each channel it computes the mean μ<sub>B</sub> and variance σ²<sub>B</sub> over <b>all images of the batch and all positions</b> (N×H×W values), then outputs <code>y = γ·(x − μ<sub>B</sub>)/√(σ²<sub>B</sub> + ε) + β</code>.</p>
+  <div class="scroll"><table class="data">
+    <thead><tr><th></th><th>γ and β</th><th>Stored mean and variance (“buffers”)</th></tr></thead>
+    <tbody>
+      <tr><td><b>Role</b></td><td>Re-stretch and re-shift the normalised values.</td><td>Normalise at evaluation time, when there is no batch.</td></tr>
+      <tr><td><b>How they change</b></td><td><b>Learned</b> by gradient descent.</td><td><b>Measured</b>: after each training-mode batch, stored ← 0.9·stored + 0.1·batch statistic.</td></tr>
+    </tbody>
+  </table></div>
+  <ul class="list">
+    <li><b>Training mode</b>: normalise with the current batch's statistics; the gradient flows through μ<sub>B</sub> and σ²<sub>B</sub>, and the buffers are updated.</li>
+    <li><b>Evaluation mode</b>: normalise with the buffers, which no longer change: a fixed affine map per channel.</li>
+    <li><b>Recalibration</b>: recompute the buffers exactly on all of D_r (true mean and variance), layer by layer, without touching any weight, γ or β; the images to forget are never used.</li>
+  </ul>
+  <div class="panel">
+    <h3>Try it: one channel, one batch of 16 images</h3>
+    <div class="controls"><span class="seg" role="group" aria-label="Batch content">
+      <button type="button" data-b="mixed" aria-pressed="true">Mixed batch</button>
+      <button type="button" data-b="single" aria-pressed="false">One-class batch</button>
+    </span></div>
+    <svg class="fig" id="figBN" viewBox="0 0 640 250" role="img" aria-label="Values of one channel before and after BatchNorm"></svg>
+    <p class="hint" id="bnText"></p>
+    <p class="hint"><b>Illustration</b>: the 16 values are made up to show the arithmetic; the real network has 32 to 128 channels per layer.</p>
+  </div>
+  <div class="note"><b>Why a one-class batch is special.</b> During NegGrad+, a concentrated forget batch is normalised by its own unusual statistics, and the gradient flows through them. The forget batches also pull the stored statistics towards one class, so a model evaluated with them can look broken.</div>
+
+  <h3 id="s-fp">1.5 Number formats</h3>
+  <p>All training runs in <b>FP32</b>; there is no half-precision training. On the A100, PyTorch runs convolutions in <b>TF32</b> by default (rounding to about 3 significant digits inside multiplications), hence check tolerances of 10⁻⁵ per layer and 10⁻⁴ relative on the network. Sensitive checks run in <b>FP64</b>. FP16 was only used to <em>store</em> some descriptive measures in step 3 (an overflow above 65,504 was fixed by a dated amendment).</p>
+
+  <h3 id="s-ng">1.6 NegGrad+ and the unlearning procedure</h3>
+  <p>NegGrad+ minimises <code>L = α·CE<sub>r</sub> − (1−α)·CE<sub>f</sub></code>: the loss goes <em>down</em> on D_r and <em>up</em> on D_f. Since CE = −log p has no ceiling, nothing stops the push.</p>
   <div class="panel">
     <h3>Push the probability of the true class down</h3>
     <div class="controls"><label for="pSlider">p(true class) = <output id="pOut"></output></label><input id="pSlider" type="range" min="-7" max="0" step="0.05" value="-0.5" aria-label="log10 of the probability"></div>
     <svg class="fig" id="figCE" viewBox="0 0 640 230" role="img" aria-label="Cross-entropy as a function of the probability of the true class"></svg>
     <p class="hint">As <code>p</code> goes to 0, <code>−log p</code> grows without limit: nothing stops the push. In the experiments, a forget loss above 10 counts as a <b>divergence</b>. A control method that instead teaches random wrong labels has a finite target and cannot run away in the same way.</p>
   </div>
+  <ul class="list">
+    <li>One epoch over D_r = <b>425 steps</b>; at each step a batch of <b>128</b> images from D_r and <b>64</b> from D_f (successive permutations of D_f, each image seen about 45 times).</li>
+    <li>SGD, constant learning rate 0.01, momentum 0.9, weight decay 5·10⁻⁴; forget weight 1−α ∈ {0.001, 0.01, 0.05}, 0.01 as the main value.</li>
+    <li>The global gradient norm is <b>clipped at 5</b>: a safety belt against huge steps when CE<sub>f</sub> runs away.</li>
+  </ul>
+
+  <h3 id="s-measures">1.7 Measures</h3>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Measure</th><th>Definition</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Divergence</td><td>CE<sub>f</sub> &gt; 10 at some step, or NaN / inf</td><td>CE<sub>f</sub> &gt; 10 means the true class gets less than e⁻¹⁰ ≈ 0.005% on average; chance gives ln 10 ≈ 2.3. Measured during unlearning, in training mode.</td></tr>
+      <tr><td>Collapse</td><td>Test accuracy ≤ 20%, or ≥ 80% of predictions in one class</td><td>Native buffers: the model as it would be shipped.</td></tr>
+      <tr><td>S<sub>mean</sub></td><td>Mean over steps of log₁₀ max(CE<sub>f</sub>, 10⁻⁷)</td><td>The larger, the more unstable.</td></tr>
+      <tr><td>Utility loss U, penalty</td><td>See step 6</td><td>Recalibrated buffers: damage in the weights.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="s-forget">1.8 How we judge forgetting</h3>
+  <p>Forgetting can never be checked directly: a model has forgotten D_f if it cannot be told apart from R. And forgetting does not mean being wrong: on concentrated sets, R still recognises about <b>93%</b> of the images to forget, because it learned the class from the other images. A model far below that does too much, which is also detectable. Three yardsticks are used, always with recalibrated buffers:</p>
+  <ul class="list">
+    <li><b>accuracy on D_f compared with R</b>: above R the model does not do enough; far below, it breaks;</li>
+    <li><b>forgetting strength E</b> = mean over D_f of log₁₀ p<sub>O</sub>(y|x) − log₁₀ p<sub>model</sub>(y|x): how much the confidence in the true class dropped, in decades; E<sub>R</sub> is the same for R;</li>
+    <li><b>a membership-inference attack</b> (once, exploratory, on Tiny ImageNet): AUC 0.5 means the attacker cannot tell.</li>
+  </ul>
+  <p>These check that a method that does not break still does something. Nothing on this page claims that a model has <em>erased</em> D_f.</p>
 </section>
 
-<section id="findings">
-  <h2>What I found</h2>
-  <h3>1 · Concentration makes NegGrad+ unstable</h3>
-  <p>In a prospective study with 10 independent repetitions (seeds) and 68 mixes of 1, 2, 5 or 10 classes, NegGrad+ diverged mostly when the request was concentrated. Hover the bars.</p>
+<!-- =============================== 2. STEP 1 =============================== -->
+<section id="step1">
+  <h2>2 · Step 1: original study and diagnostics</h2>
+  <div class="note warn"><b>Post hoc.</b> The classes and variants in this step were chosen after seeing the original study. These analyses generate hypotheses, which steps 2 to 4 test on new models.</div>
+
+  <h3>2.1 The original study</h3>
+  <p>5 seeds × 11 forget sets (10 concentrated + 1 stratified) = <b>55 NegGrad+ runs</b>.</p>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Forget set</th><th class="num">Divergences (/5)</th><th class="num">Collapses (/5)</th></tr></thead>
+    <tbody>
+      <tr><td>c1, c2, c4, c6</td><td class="num">5</td><td class="num">5</td></tr>
+      <tr><td>c5</td><td class="num">4</td><td class="num">3</td></tr>
+      <tr><td>c7</td><td class="num">5</td><td class="num">3</td></tr>
+      <tr><td>c0, c3, c8, c9</td><td class="num">0</td><td class="num">0</td></tr>
+      <tr><td>Stratified</td><td class="num">0</td><td class="num">0</td></tr>
+      <tr><td><b>Total</b></td><td class="num"><b>29 / 55</b></td><td class="num"><b>26 / 55</b></td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><b>Reading.</b> Only concentrated sets fail, never the stratified one, and always the same six classes. The pre-registered criterion was met by destroyed models: this is not forgetting, it is an instability.</div>
+
+  <h3>2.2 Diagnostic 1: BatchNorm memory or weights?</h3>
+  <p>The 55 runs are replayed <b>bit for bit</b> (same O, same batches, same order), changing only how the buffers are handled. Original version V0, at each step:</p>
+<pre class="code">1. out_r = net(keep_batch)     // BN: statistics of the keep batch, updates its buffers
+2. out_f = net(forget_batch)   // BN: statistics of the forget batch, updates its buffers
+3. loss  = α·CE(out_r) − (1−α)·CE(out_f)
+4. one backward pass, clipping at 5, weight update</pre>
+  <p><b>V1c</b>: the forget batch no longer updates the buffers. <b>V2</b>: buffers recalibrated on D_r after unlearning. <b>α = 1</b>: no forget term at all.</p>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Version</th><th>Test accuracy of the 26 collapsed runs</th></tr></thead>
+    <tbody>
+      <tr><td>V0</td><td>10% (median)</td></tr>
+      <tr><td>V1c</td><td>69% (median)</td></tr>
+      <tr><td>V2 (recalibrated)</td><td>74% (median)</td></tr>
+      <tr><td>α = 1</td><td>never collapses (minimum 91%)</td></tr>
+    </tbody>
+  </table></div>
+  <div class="panel">
+    <div class="controls"><span class="seg" role="group" aria-label="Evaluation">
+      <button type="button" data-ev="nat" aria-pressed="true">Stored (native) statistics</button>
+      <button type="button" data-ev="rec" aria-pressed="false">Recomputed statistics</button>
+    </span></div>
+    <svg class="fig" id="figTrap" viewBox="0 0 640 220" role="img" aria-label="Test accuracy of collapsed runs before and after recomputing BatchNorm statistics"></svg>
+    <p class="hint" id="trapText"></p>
+  </div>
+  <div class="note"><b>Reading.</b> The forget term is necessary. Polluted buffers explain a large part of the measured collapse, but even recalibrated the models stay near 74% instead of 93%: <b>the weights are damaged too</b>. On c1, CE<sub>f</sub> reaches 1.9–3.0·10⁵ with 68–74% of steps clipped.</div>
+
+  <h3>2.3 Diagnostic 2: how the forget batch goes through BatchNorm</h3>
+  <p>The 6 collapsing classes × 5 seeds = <b>30 runs per variant</b>, weight 0.01. <b>A</b> is V0. <b>B</b> sends both batches through together, so the forget batch is normalised with the combined batch (128 + 64). <b>C</b> keeps BatchNorm in evaluation mode with O's buffers, while γ and β are still updated.</p>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Variant</th><th class="num">Divergences</th><th>Test accuracy</th><th>Accuracy on D_f (c6)</th></tr></thead>
+    <tbody>
+      <tr><td>A</td><td class="num">29 / 30</td><td>collapsed</td><td>–</td></tr>
+      <tr><td>B</td><td class="num">0 / 30</td><td>within ~1.5 pts of O</td><td>94.5% (R: 79.5%)</td></tr>
+      <tr><td>C</td><td class="num">0 / 30</td><td>within ~1.5 pts of O</td><td>93.0% (R: 79.5%)</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><b>Reading.</b> Normalising the forget batch with <b>its own one-class statistics</b> (and the gradient through them) plays a role in the divergences. Divergence is measured in training mode, where buffers are not used, so buffer pollution is not what matters here. It is a hint, not a proof: B and C change several things at once. And they barely forget: on D_f they stay close to O, like fine-tuning.</div>
+
+  <h3>2.4 Diagnostic 3: which part of BatchNorm?</h3>
+  <p><b>c1</b> (diverges) and <b>c8</b> (stable control: 0 divergences under A), 5 seeds, 10 runs per variant. Only the forget-batch pass changes:</p>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Variant</th><th>Forget batch normalised with</th><th>Gradient through stats</th><th>Updates buffers</th><th class="num">Div. c1</th><th>Max CE<sub>f</sub> (c1)</th><th>Test acc. c1</th><th class="num">Div. c8</th></tr></thead>
+    <tbody>
+      <tr><td>A</td><td>its own statistics</td><td>yes</td><td>yes</td><td class="num">5/5</td><td>1.9–3.0·10⁵</td><td>10%</td><td class="num">0/5</td></tr>
+      <tr><td>E2</td><td>its own statistics</td><td>yes</td><td>no</td><td class="num">5/5</td><td>same as A</td><td>69–79%</td><td class="num">0/5</td></tr>
+      <tr><td>E1D</td><td>its own statistics</td><td>no (detached)</td><td>no</td><td class="num">5/5</td><td>11–34</td><td>32–88%</td><td class="num">0/5</td></tr>
+      <tr><td>E1</td><td>current buffers (keep batches only)</td><td>no</td><td>no</td><td class="num">0/5</td><td>&lt; 0.1</td><td>92.4–93.3%</td><td class="num">0/5</td></tr>
+      <tr><td>E1-O</td><td>O's frozen buffers</td><td>no</td><td>no</td><td class="num">5/5</td><td>up to 1.9·10¹⁶</td><td>10%</td><td class="num">5/5</td></tr>
+    </tbody>
+  </table></div>
+  <p>On c1, E1 still recognises 99.3–99.8% of the images to forget, but R recognises <b>98.7%</b> of them too, so E1 cannot be said to fail at forgetting on this class.</p>
+  <div class="note"><b>Reading.</b> (1) The gradient through the forget batch's statistics <b>hugely amplifies</b> the blow-up (~10⁵ for A vs 11–34 for E1D). (2) Using the forget batch's own statistics <b>coincides</b> with crossing the threshold (E1D crosses it, E1 does not). (3) Frozen statistics from O explode too, even on c8: no simple “fixed vs batch statistics” story. E2 diverges exactly like A but collapses less at evaluation: buffer updates affect evaluation, not divergence.</div>
+  <p><b>Note on gradients</b> (post hoc): the keep and forget gradients do not conflict (cosine ≈ 0), and the gradient norm blows up about 28 steps <em>after</em> CE<sub>f</sub> crosses 10: a symptom, not an early warning.</p>
+</section>
+
+<!-- =============================== 3. STEP 2 =============================== -->
+<section id="step2">
+  <h2>3 · Step 2: replication with statistical tests</h2>
+  <p>New models, a protocol written <b>before</b> running, 1,141 units in 6 h on an A100, 9,801 checks passed.</p>
+  <ul class="list">
+    <li><b>Study 1</b>: Fashion-MNIST, BatchNorm CNN, variants A and C, 5 seeds. Per seed: 11 forget sets, each with an R, a fine-tuning run and NegGrad+ under A and C at 3 weights (66 NegGrad+ runs per seed, 330 in all).</li>
+    <li><b>Study 2</b>: the same CNN with <b>GroupNorm</b>, which normalises each image on its own, without looking at the batch. 5 seeds.</li>
+    <li><b>Study 3</b>: CIFAR-10 with a BatchNorm ResNet-18, variants A and C, 3 seeds.</li>
+  </ul>
+
+  <h3>3.1 The statistic U</h3>
+  <p>Each concentrated run is compared with the <b>paired</b> stratified run (same seed, variant, weight and O): ψ = 1 if it is more unstable (higher S<sub>mean</sub>), 0.5 if tied, 0 otherwise; a numerical failure always counts as more unstable (none occurred). <b>U<sub>s</sub></b> = mean of ψ over 10 classes × 3 weights = 30 comparisons for seed s. U = 0.5: no effect; U = 1: always more unstable.</p>
+  <ul class="list">
+    <li><b>Why per seed</b>: the 11 runs of a seed share the same O, so they are not independent; counting them separately would fake precision. One U per seed, then a <b>t test</b> over seeds.</li>
+    <li><b>p-value</b>: the probability of a result at least as extreme <em>if there were no effect</em>, not the probability that the result is due to chance.</li>
+    <li><b>p<sub>Holm</sub></b>: with several tests, the risk that one “succeeds” by luck grows (about 40% with 10 tests at 5%). Holm adjusts the p-values to keep that overall risk at 5%.</li>
+    <li><b>TOST</b>: “no difference detected” is not “no effect”. The TOST shows that the mean loss gap concentrated − stratified (Δ<sub>mean</sub>, in decades) lies within a margin of ±1 decade (90% interval).</li>
+  </ul>
+  <p>Try these statistics on real numbers: the 12 per-seed penalties of the tuning study (step 6). Change how many seeds are used and watch the interval, the p-value and the equivalence test move.</p>
+  <div class="panel">
+    <div class="controls"><label for="nSeeds">seeds used: <output id="nOut"></output></label><input id="nSeeds" type="range" min="2" max="12" step="1" value="12"></div>
+    <svg class="fig" id="figStats" viewBox="0 0 640 200" role="img" aria-label="Seed values, mean, confidence intervals and equivalence margin"></svg>
+    <div class="scroll"><table class="data" id="statTable"></table></div>
+    <p class="hint">Mean = average of the seeds. SD = how much seeds differ. Standard error SE = SD/√n, the uncertainty of the mean. The 95% confidence interval (CI) is mean ± t × SE, where t comes from Student's distribution with n−1 degrees of freedom. The t-statistic = mean / SE; the <b>p-value</b> is the chance of a t at least that large if the true penalty were 0. <b>Equivalence</b> (TOST): the 90% interval must lie inside a margin fixed in advance (±2 points). A result can be both “detected” (CI excludes 0) and “equivalent” (inside the margin): a real but small effect. (The values are rounded to 2 decimals here, so t may differ from the frozen analysis, 11.95, in the last digit.)</p>
+  </div>
+
+  <h3>3.2 Results</h3>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Study</th><th>Test</th><th>Estimate [95% CI]</th><th>p<sub>Holm</sub></th><th>Conclusion</th></tr></thead>
+    <tbody>
+      <tr><td>1 (BN)</td><td>U<sub>A</sub> − 0.5</td><td>0.36 [0.33, 0.39] (U<sub>A</sub> = 0.86)</td><td>1.7·10⁻⁵</td><td>effect</td></tr>
+      <tr><td>1 (BN)</td><td>U<sub>A</sub> − U<sub>C</sub></td><td>0.37 [0.30, 0.45]</td><td>1.5·10⁻⁴</td><td>effect</td></tr>
+      <tr><td>2 (GN)</td><td>U<sub>GN</sub> − 0.5</td><td>−0.033 [−0.075, 0.008]</td><td>0.089</td><td>none detected</td></tr>
+      <tr><td>3 (CIFAR)</td><td>U<sub>A</sub> − 0.5</td><td>U<sub>A</sub> = 1 in all 3 seeds</td><td>–</td><td>not computable (zero variance)</td></tr>
+      <tr><td>3 (CIFAR)</td><td>U<sub>A</sub> − U<sub>C</sub></td><td>0.43 [0.35, 0.52]</td><td>0.0039</td><td>effect</td></tr>
+    </tbody>
+  </table></div>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>TOST (margin ±1 decade)</th><th>Δ<sub>mean</sub> [90% CI]</th><th>Equivalent to 0?</th></tr></thead>
+    <tbody>
+      <tr><td>Study 1, A</td><td>2.39 [2.32, 2.47]</td><td>no</td></tr>
+      <tr><td>Study 1, C</td><td>−0.14 [−0.24, −0.04]</td><td>yes</td></tr>
+      <tr><td>Study 2, GroupNorm</td><td>−0.14 [−0.20, −0.08]</td><td>yes</td></tr>
+      <tr><td>Study 3, A</td><td>2.12 [2.08, 2.15]</td><td>no</td></tr>
+      <tr><td>Study 3, C</td><td>0.07 [0.04, 0.10]</td><td>yes</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><b>Reading.</b> Under A, concentrated runs are almost always more unstable (2.39 decades more loss on average, about 250×). The effect vanishes under C <b>and with GroupNorm</b>, where TOST shows it is negligible: what matters is normalising <b>with batch statistics</b>. At 0.01 on Fashion-MNIST, A diverges in 30/50 concentrated runs, C in none, and they are exactly the six classes of step 1, with brand-new models.</div>
+
+  <h3>3.3 CIFAR-10 / ResNet-18</h3>
+  <p>30 epochs (learning rate 0.1, cosine), random crops and flips, 348 steps per epoch, 490 images to forget. Under A, concentrated sets diverge 0/30, 30/30 and 30/30 times at the three weights, but <b>never collapse</b>: divergence and collapse are different things.</p>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Test-accuracy loss of A vs O (concentrated)</th><th class="num">0.001</th><th class="num">0.01</th><th class="num">0.05</th></tr></thead>
+    <tbody>
+      <tr><td>Native buffers</td><td class="num">5.6 pts</td><td class="num">7.2 pts</td><td class="num">28.5 pts</td></tr>
+      <tr><td>After recalibration</td><td class="num">1.5 pts</td><td class="num">1.8 pts</td><td class="num">7.7 pts</td></tr>
+    </tbody>
+  </table></div>
+  <p>Skip connections might limit how far the instability propagates, but that is an <em>untested hypothesis</em>.</p>
+  <div class="note warn"><b>Limits.</b> The analysis notebook was not committed before it ran; 5 and 3 seeds, so exploratory by the protocol's own rule; and class identity is still confounded with concentration.</div>
+</section>
+
+<!-- =============================== 4. STEP 3 =============================== -->
+<section id="step3">
+  <h2>4 · Step 3: which part of BatchNorm?</h2>
+  <p>Two questions. <b>Q1</b>: does letting the gradient flow through the batch statistics amplify the instability? (A vs E1D). <b>Q2</b>: does normalising with the forget batch's own statistics rather than the current buffers amplify it? (E1D vs E1).</p>
+  <p><b>Plan</b>: per seed, 3 draws of 600 images per class (30 concentrated sets) and 10 stratified draws, so 40 sets; × 3 weights × 5 seeds = <b>600 units</b>. A and E2 have identical weights (only buffers differ), so they share one trajectory: 3 trajectories per unit plus FT, R, O and controls, <b>2,445 runs</b> in 5.39 h.</p>
+  <ul class="list">
+    <li><b>A vs E1D</b>: S<sub>mean</sub> over 425 steps (same forward pass at equal weights). Hypothesis H<sub>B</sub>.</li>
+    <li><b>E1D vs E1</b>: different forward passes, so a common measure: every 25 steps (17 stops), the loss on all 600 images to forget with a clean buffer built the same way for both (keep batches only), averaged in log₁₀. Hypothesis H<sub>F</sub>.</li>
+    <li>θ = share of concentrated units where the first variant is more unstable; ι = θ<sub>conc</sub> − θ<sub>strat</sub> (is the effect stronger when concentrated? I<sub>B</sub>, I<sub>F</sub>). Holm over 4 tests.</li>
+  </ul>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Test</th><th>θ or ι</th><th>p<sub>Holm</sub></th><th>Continuous gap [95% CI]</th><th>Conclusion</th></tr></thead>
+    <tbody>
+      <tr><td>H<sub>B</sub>: A vs E1D</td><td>0.82</td><td>3.7·10⁻⁵</td><td>+0.83 [0.81, 0.86]</td><td>supported</td></tr>
+      <tr><td>H<sub>F</sub>: E1D vs E1</td><td>0.65</td><td>7.5·10⁻⁴</td><td>+0.04 [−0.08, 0.16]</td><td>weakened (equivalent to 0)</td></tr>
+      <tr><td>I<sub>B</sub></td><td>+0.33</td><td>4.0·10⁻⁴</td><td>+0.83 [0.81, 0.86]</td><td>supported</td></tr>
+      <tr><td>I<sub>F</sub></td><td>+0.40</td><td>7.5·10⁻⁴</td><td>+0.89 [0.70, 1.09]</td><td>supported, but see below</td></tr>
+    </tbody>
+  </table></div>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Divergences (/150 concentrated, /50 stratified)</th><th class="num">0.001</th><th class="num">0.01</th><th class="num">0.05</th></tr></thead>
+    <tbody>
+      <tr><td>A, concentrated</td><td class="num">12</td><td class="num">90</td><td class="num">150</td></tr>
+      <tr><td>E1D, concentrated</td><td class="num">12</td><td class="num">89</td><td class="num">121</td></tr>
+      <tr><td>E1, concentrated</td><td class="num">0</td><td class="num">60</td><td class="num">150</td></tr>
+      <tr><td>E1, stratified</td><td class="num">0</td><td class="num">0</td><td class="num">47</td></tr>
+      <tr><td>A and E1D, stratified</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><b>Reading.</b> (1) <b>Q1: yes</b>. A reaches a higher forget loss than E1D in 82% of concentrated units, about <b>7× larger</b>, growing with the weight (+0.01, +0.75, +1.73 decade); on stratified sets the gap is near zero. (2) <b>Q2: weak</b>. The continuous gap is equivalent to 0; the positive I<sub>F</sub> comes mostly from stratified sets at 0.05, where E1 diverges 47 times out of 50, and on concentrated sets the sign flips with the weight (+0.66 at 0.01, −0.61 at 0.05). (3) <b>No variant is a cure.</b></div>
+</section>
+
+<!-- =============================== 5. STEP 4 =============================== -->
+<section id="step4">
+  <h2>5 · Step 4: concentration or hard classes?</h2>
+  <p>So far the same six classes always failed. Maybe “concentrated” just meant “contains a hard class”. This step separates the two.</p>
+  <p><b>Plan</b>: 10 new seeds (401–410), each with a new O; variant A at 0.01, C as secondary. Per seed, 68 sets of 600 images: 10 pure sets, 45 pairs (300 + 300), 12 five-class sets (120 per class) and 1 stratified set, so 680 runs. Concentration is the label entropy <b>H = log₂(number of classes)</b>: 0, 1, 2.32 or 3.32 bits.</p>
+  <div class="panel">
+    <h3>Label entropy: how mixed is a forget set?</h3>
+    <div class="controls"><span class="seg" role="group" aria-label="Number of classes">
+      <button type="button" data-k="1" aria-pressed="true">1 class</button><button type="button" data-k="2" aria-pressed="false">2</button>
+      <button type="button" data-k="5" aria-pressed="false">5</button><button type="button" data-k="10" aria-pressed="false">10 classes</button>
+    </span></div>
+    <svg class="fig" id="figH" viewBox="0 0 640 120" role="img" aria-label="Class proportions and label entropy"></svg>
+    <p class="hint" id="hText"></p>
+  </div>
+  <p><b>Measure</b>: the early loss S = mean log₁₀ CE<sub>f</sub> over the first 24 steps, fixed <b>in advance</b> on earlier traces (no divergence before step 24; it already separated future divergers, AUC 0.92). It measures the cause before the blow-up, not the size of the blow-up.</p>
+  <p><b>Model</b>: what would a mix give if only its classes mattered? Each class has an effect x<sub>c</sub>, and a mix with proportions p<sub>c</sub> is predicted by a power mean M<sub>λ</sub> = (Σ p<sub>c</sub> x<sub>c</sub><sup>λ</sup>)<sup>1/λ</sup>, with λ estimated between −3 and 3 rather than guessed. The model is <code>S = log₁₀ M<sub>λ</sub>(p; x) + γ·H + noise</code>: γ = 0 if class identity explains everything, γ &lt; 0 if spreading a request helps beyond its classes.</p>
+  <div class="panel">
+    <h3>Power mean: many ways to combine two classes</h3>
+    <p class="hint">Suppose class A alone gives an early forget loss of 1 and class B alone gives 9. What should a 50/50 mix give? It depends on how difficulties combine; the power mean M<sub>λ</sub> = (½·1<sup>λ</sup> + ½·9<sup>λ</sup>)<sup>1/λ</sup> covers a whole family.</p>
+    <div class="controls"><label for="lam">λ = <output id="lamOut"></output></label><input id="lam" type="range" min="-3" max="3" step="0.1" value="0"></div>
+    <svg class="fig" id="figM" viewBox="0 0 640 110" role="img" aria-label="Power mean of two class difficulties"></svg>
+    <p class="hint" id="mText"></p>
+  </div>
+<pre class="code">for each seed s = 1..10:
+    fit (x0..x9, λ, γ) on its 68 sets by non-linear least squares
+    keep γ_s
+t statistic over the 10 γ_s
+p-value by parametric bootstrap: 2,000 simulated experiments with γ = 0,
+    each refitted; p = share of simulated t at least as extreme as the real one</pre>
+  <p>The bootstrap does not estimate the parameters (least squares does): it calibrates the test threshold, because λ is estimated and the Student table is then unreliable.</p>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Result</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>γ</td><td>−0.246 decade per bit [−0.263, −0.228]</td></tr>
+      <tr><td>p (bootstrap)</td><td>0.001, the smallest this bootstrap can give</td></tr>
+      <tr><td>Seeds with γ &lt; 0</td><td>10 of 10</td></tr>
+      <tr><td>Estimated λ</td><td>0.34 to 1.09</td></tr>
+      <tr><td>γ under C (secondary)</td><td>−0.004, about 0</td></tr>
+    </tbody>
+  </table></div>
   <div class="panel">
     <div class="controls"><span class="seg" role="group" aria-label="Outcome">
       <button type="button" data-out="div" aria-pressed="true">Diverged</button>
@@ -254,38 +394,31 @@
     <svg class="fig" id="figDose" viewBox="0 0 640 240" role="img" aria-label="Share of runs that diverged by number of classes in the forget set"></svg>
     <p class="hint">Runs out of: 100 one-class, 450 two-class, 120 five-class and 10 ten-class sets (implementation A, weight 0.01). A variant that keeps BatchNorm in evaluation mode (C) never diverged or collapsed in this study.</p>
   </div>
-  <details class="study" id="dose-method">
-    <summary><span class="n">?</span><span class="t">How these runs were made, and what “diverged” means</span><span class="s">training recipe, unlearning recipe, the 68 forget sets, the two failure definitions</span></summary>
-    <div class="study-body"><dl>
-      <dt>Data</dt><dd>Fashion-MNIST. 5,000 images (500 per class) are set aside for validation. The 600 images to forget (D_f) are drawn from the rest, and the remaining 54,400 images form the retained set D_r.</dd>
-      <dt>Original model</dt><dd>The small CNN described <a href="#basics">above</a>, trained from scratch on each seed: SGD with momentum 0.9, learning rate 0.05 decreasing along a cosine curve, weight decay 5·10⁻⁴, batches of 128, 15 epochs, no data augmentation. It reaches about 93% test accuracy. All 68 forget sets of a seed start from this same model.</dd>
-      <dt>Unlearning</dt><dd>NegGrad+ with loss α·CE<sub>r</sub> − (1−α)·CE<sub>f</sub> and forget weight 1−α = 0.01. One pass over D_r: 425 steps, each with a batch of 128 retained and 64 forget images (the 600 forget images are reused throughout). SGD, constant learning rate 0.01, momentum 0.9, weight decay 5·10⁻⁴. The gradient is clipped at norm 5 at every step.</dd>
-      <dt>BatchNorm (A vs C)</dt><dd><b>A</b> (the main variant): the retained and forget batches go through the network separately, in training mode, so each BatchNorm layer normalises the forget batch with that batch's own mean and variance and updates its stored statistics with it. <b>C</b> (control): BatchNorm in evaluation mode with the original model's stored statistics, which never change.</dd>
-      <dt>The 68 forget sets</dt><dd>Always 600 images: each class alone (10 sets of 600), every pair of classes (45 sets of 300 + 300), 12 five-class sets (120 per class, each class appears in 6 of them) and one spread set (60 per class). Which images are drawn depends only on the seed and the set, so A and C see exactly the same images in the same order. 68 sets × 10 seeds give the 100 / 450 / 120 / 10 runs per bar.</dd>
-      <dt>Diverged</dt><dd>The forget loss CE<sub>f</sub> exceeded 10 at any step, or the numbers broke down (NaN or infinity). For scale: a model that guesses at random among 10 classes has CE = ln 10 ≈ 2.3. CE = 10 means it gives the true class a probability of about e⁻¹⁰ ≈ 0.005%. The push has run far past “not knowing” and keeps going, because NegGrad+'s forget term has no floor.</dd>
-      <dt>Collapsed</dt><dd>After unlearning, with the model's own stored BatchNorm statistics (“native buffers”): test accuracy of 20% or less, or 80% or more of all test predictions in a single class. As explained in <a href="#trap">the trap</a>, most of these models recover after their statistics are recomputed on D_r.</dd>
-    </dl></div>
-  </details>
+  <div class="note"><b>Reading.</b> The more concentrated the set, the larger the early loss, <b>beyond what its classes predict</b>: from 1 to 10 classes (3.32 bits) it drops by 0.82 decade, about <b>6.6× lower</b> than the classes predict. Under C the effect disappears. This is the central result.</div>
+  <div class="note warn"><b>Limits.</b> One forget weight, one model, one dataset; the model cannot represent interactions specific to some pairs of classes; the measure is the early loss, not divergence or forgetting directly.</div>
+</section>
 
-  <h3>2 · It is not just that some classes are harder</h3>
-  <p>A statistical model accounted for the difficulty of each class and for a whole family of ways to combine them (power means of order −3 to 3). Even then, <b>less concentrated sets had a lower early forget loss than their classes predict</b>: −0.246 decade per bit of label entropy (95% CI −0.263 to −0.228, all 10 seeds negative). A decade is a factor of 10. This rules out the combination rules of that family, not every possible interaction between specific pairs of classes.</p>
-  <details class="study" id="identity-method">
-    <summary><span class="n">?</span><span class="t">How “beyond class identity” was tested</span><span class="s">the objection, the early forget loss, the power-mean model, γ and the bootstrap test</span></summary>
-    <div class="study-body"><dl>
-      <dt>The objection</dt><dd>In every study, the classes that diverge when forgotten alone are the same six (1, 2, 4, 5, 6, 7). So maybe some classes are simply hard to forget, and “concentrated” only means “contains a hard class”. A spread set mixes hard and easy classes, which could be enough to calm it down.</dd>
-      <dt>Data</dt><dd>The 68 forget sets of the chart above (one class, pairs, five classes, spread; always 600 images), 10 new seeds (401–410), implementation A, forget weight 0.01, same recipes as above.</dd>
-      <dt>Outcome</dt><dd><b>Early forget loss</b> S: the average of log₁₀ CE<sub>f</sub> over the first 24 steps. Why early: on earlier data, no run had diverged before step 24, so S is measured before any explosion and does not just count explosions. It was chosen before the study, because on those earlier runs it already told apart the runs that would diverge later from those that would not (AUC 0.92: a random diverging run had a higher S than a random stable run 92% of the time).</dd>
-      <dt>Concentration</dt><dd>The label entropy H = log₂(number of classes): 0 bit for one class, 1 for two, 2.32 for five, 3.32 for ten. One bit more means the request is spread over twice as many classes.</dd>
-      <dt>What classes alone predict</dt><dd>Each class c gets an effect x<sub>c</sub>, roughly its early loss when it is forgotten alone. For a mix with class proportions p<sub>c</sub>, the prediction is a <b>power mean</b> M<sub>λ</sub> = (Σ p<sub>c</sub> x<sub>c</sub><sup>λ</sup>)<sup>1/λ</sup>. The order λ says how classes combine: λ = 1 is the plain average (a hard class weighs a lot), λ → 0 the geometric mean (average of the logs), λ = −1 the harmonic mean (an easy class weighs a lot). Rather than guessing the right rule, λ is estimated from the data, anywhere between −3 and 3. Try it in the power-mean widget in <a href="#basics">the basics</a>.</dd>
-      <dt>The model</dt><dd>For each seed, on its 68 sets: S = log₁₀ M<sub>λ</sub>(p; x) + <b>γ·H</b> + noise. The 10 class effects, λ and γ (12 numbers) are fitted by non-linear least squares. If class identity explains everything, γ = 0. If spreading a request helps beyond the classes it contains, γ &lt; 0.</dd>
-      <dt>Test</dt><dd>One γ per seed, so 10 values, and a one-sample t statistic on them. Because λ is estimated, the usual Student table is not reliable here, so the threshold came from a <b>parametric bootstrap</b>: 2,000 fake 10-seed experiments simulated with γ = 0 (fitted classes, fitted λ, heavy-tailed noise), each refitted; the p-value is how often a fake experiment gives a t as extreme as the real one.</dd>
-      <dt>Result</dt><dd>γ = <b>−0.246</b> decade per bit (95% CI −0.263 to −0.228, bootstrap p = 0.001, the smallest this bootstrap can give; all 10 seeds negative; λ estimated between 0.34 and 1.09). From one class to ten (3.32 bits), that is 0.82 decade: the early loss of the spread set is about <b>6.6 times lower</b> than its classes predict.</dd>
-      <dt>Does not show</dt><dd>That no particular pair of classes interacts in a special way (the model cannot represent that), nor anything about divergence or forgetting directly: the outcome is the early loss level, at one weight, for one network. Under the control C (BatchNorm frozen), γ was about zero (−0.004).</dd>
-    </dl></div>
-  </details>
+<!-- =============================== 6. STEP 5 =============================== -->
+<section id="step5">
+  <h2>6 · Step 5: is it the NegGrad+ objective?</h2>
+  <p>NegGrad+ is compared with <b>random labels (RL)</b>: each image to forget gets a wrong label drawn among the 9 other classes, and the model is trained <em>towards</em> it: <code>L = α·CE<sub>r</sub> + (1−α)·CE(x<sub>f</sub>, wrong label)</code>. Unlike NegGrad+, this loss has a <b>floor</b>. Take a boot to forget, labelled “sneaker” by RL:</p>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>p(boot)</th><th>NegGrad+ loss (pushed up)</th><th>p(sneaker)</th><th>RL loss (pushed down)</th></tr></thead>
+    <tbody>
+      <tr><td>0.99</td><td>0.01</td><td>0.01</td><td>4.6</td></tr>
+      <tr><td>0.1</td><td>2.3</td><td>0.5</td><td>0.69</td></tr>
+      <tr><td>10⁻⁴</td><td>9.2</td><td>0.99</td><td>0.01</td></tr>
+      <tr><td>→ 0</td><td>→ ∞</td><td>→ 1</td><td>→ 0</td></tr>
+    </tbody>
+  </table></div>
+  <p>NegGrad+ has no finish line: the loss keeps rising and the gradient keeps pushing (only clipping slows it). With RL, once an image is predicted “sneaker”, its term and gradient become tiny: <b>the push dies out on its own</b>. RL is “walk to the wall and stop”; NegGrad+ is “get as far from the wall as you can”. This does not mean p(sneaker) rises at every step: each step sees one batch of 64, steps have a finite size, and the keep term (99% of the loss) pulls back, since D_r holds other boots labelled “boot”. Everything else is identical (same O, sets, batches, BatchNorm treatment A, learning rate and clipping), so the objective is the only thing that changes.</p>
 
-  <h3>3 · It is specific to how NegGrad+ forgets</h3>
-  <p>With everything else identical, I compared NegGrad+ with the random-label control. The measure is the typical size of the gradients before they are clipped (<code>Ḡ</code>, in decades): how much more it grows for concentrated than for spread requests.</p>
+  <h3>6.1 First attempt: the clipping burden</h3>
+  <p><b>B</b> = share of the 425 steps where the gradient norm exceeds 5 and is clipped. Per method, Δ = B<sub>concentrated</sub> − B<sub>stratified</sub>, and θ<sub>B</sub> = Δ<sub>NegGrad+</sub> − Δ<sub>RL</sub> = <b>0.30</b> [0.29, 0.32] (10 seeds, 782 runs): on concentrated sets NegGrad+ clips about 30% more steps than RL.</p>
+  <div class="note warn"><b>Floor effect.</b> Under RL, B is stuck at 0 (4 clipped steps in 330 runs), concentrated or not. That does not prove RL is unaffected: a gradient norm going from 1 to 2 stays below 5, and B sees nothing, like a fever alarm that only rings above 40 °C. A continuous measure was needed.</div>
+
+  <h3>6.2 Second attempt: the typical gradient size Ḡ</h3>
+  <p>10 new seeds (101–110). <b>Ḡ</b> = mean over the 425 steps of log₁₀ (gradient norm before clipping): +1 means gradients 10× larger, +0.1 about 26% larger. Per seed, shift = Ḡ(10 pure sets) − Ḡ(stratified), and θ = shift<sub>NegGrad+</sub> − shift<sub>RL</sub>; t test at 0.01, other weights secondary with Holm. Simulations before any run checked 4.4–5.9% false positives.</p>
   <div class="panel">
     <div class="controls"><span>forget weight 1−α:</span><span class="seg" role="group" aria-label="Forget weight">
       <button type="button" data-w="0" aria-pressed="false">0.001</button>
@@ -295,69 +428,42 @@
     <svg class="fig" id="figG" viewBox="0 0 640 210" role="img" aria-label="Concentration shift of gradient size under NegGrad+ and random labels"></svg>
     <p class="hint" id="gText"></p>
   </div>
-  <details class="study" id="gradient-method">
-    <summary><span class="n">?</span><span class="t">How the NegGrad+ vs random-label comparison was made</span><span class="s">the control, why a continuous measure, Ḡ, the paired contrast and the test</span></summary>
-    <div class="study-body"><dl>
-      <dt>The control</dt><dd><b>Random labels (RL)</b>: each image to forget gets a wrong label, drawn among the 9 other classes (fixed per seed and set, balanced across classes), and the model is trained <em>towards</em> it: α·CE<sub>r</sub> + (1−α)·CE(x<sub>f</sub>, wrong label). Unlike NegGrad+, this target has a floor: once the model predicts the wrong label, its loss reaches zero and the push stops. Everything else is identical: same original model, same forget sets, same batches in the same order, same BatchNorm treatment (A), same learning rate and clipping.</dd>
-      <dt>Why a new measure</dt><dd>A previous study used the <b>clipping burden</b> B, the share of steps whose gradient is larger than the clip threshold 5. Under random labels it was stuck at zero (4 clipped steps in 330 runs): it could not see any effect below the threshold. Hence a continuous measure.</dd>
-      <dt>Ḡ</dt><dd>At each of the 425 steps, the size (L2 norm, over all weights) of the gradient of the full loss, measured <em>before</em> clipping. Ḡ is the average of log₁₀ of these sizes. A difference of 1 in Ḡ is a factor 10 in the typical gradient size; 0.1 is about +26%. It measures how hard the optimiser is being pushed, not instability itself.</dd>
-      <dt>Contrast, per seed</dt><dd>For each method: shift = (mean Ḡ over the 10 one-class sets) − (Ḡ of the spread set). The main number θ = shift under NegGrad+ − shift under RL. Each seed (101–110, new models) gives one θ, so 10 values.</dd>
-      <dt>Test</dt><dd>Two-sided one-sample t test on the 10 values at weight 0.01 (main). The weights 0.001 and 0.05 and the RL shift alone are secondary, with a Holm correction. Before any run, simulations checked that the tests raise false alarms at about the nominal 5% rate (0.044–0.059).</dd>
-      <dt>Result (0.01)</dt><dd>Concentration raised Ḡ by <b>0.705</b> decade under NegGrad+ (gradients about 5 times larger) and by <b>0.053</b> under RL (about 13% larger). θ = 0.652 (95% CI 0.607–0.696, p &lt; 10⁻¹⁰), positive in all 10 seeds.</dd>
-      <dt>Other weights</dt><dd>At 0.001, θ = −0.015: the forget push is too weak for either method to matter. At 0.05, θ = 2.644 (NegGrad+ gradients hundreds of times larger), while the RL shift became negative. On concentrated sets NegGrad+ lost 1.3, 46.8 and 82.9 test-accuracy points at the three weights; RL only 1.0, 2.0 and 2.9.</dd>
-      <dt>Does not show</dt><dd>That Ḡ is an instability measure (its sign depends on the weight), that random labels are unstable (their small shift never came with a divergence), or which part of the network causes the difference.</dd>
-    </dl></div>
-  </details>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Forget weight</th><th class="num">0.001</th><th class="num">0.01</th><th class="num">0.05</th></tr></thead>
+    <tbody>
+      <tr><td>θ (decades)</td><td class="num">−0.015</td><td class="num">0.652 [0.607, 0.696]</td><td class="num">2.644</td></tr>
+      <tr><td>Test-accuracy loss, NegGrad+ (concentrated)</td><td class="num">1.3</td><td class="num">46.8</td><td class="num">82.9</td></tr>
+      <tr><td>Test-accuracy loss, RL (concentrated)</td><td class="num">1.0</td><td class="num">2.0</td><td class="num">2.9</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><b>Reading.</b> At 0.01, concentration makes gradients about <b>5× larger</b> under NegGrad+ but only <b>13% larger</b> under RL, in all 10 seeds. The unbounded objective turns the small disturbance caused by BatchNorm into a blow-up. It does not show that RL is unstable, nor which part of the network is responsible.</div>
 </section>
 
-<section id="fixes">
-  <h2>Can it be avoided?</h2>
-  <p>Three pre-specified follow-up studies tried to remove the <b>penalty</b>. Here the penalty is not a term added to the training loss; it is a <b>measure</b> computed after unlearning, built in three levels.</p>
+<!-- =============================== 7. STEP 6 =============================== -->
+<section id="step6">
+  <h2>7 · Step 6: remedies for the instability</h2>
+  <h3>7.1 How the damage is measured</h3>
+  <p><b>U</b> = accuracy of O on D_r − accuracy of the unlearned model on D_r, both recalibrated (damage in the weights, not buffer pollution). <b>Penalty</b> = mean U over the 10 concentrated sets − U of the stratified set, per seed. The effect of a remedy is <b>I</b> = penalty of plain NegGrad+ − penalty with the remedy.</p>
+  <div class="note warn"><b>A small penalty is not automatically good news.</b> A model that forgets nothing damages nothing. So the forgetting strength and the accuracy on D_f are always checked alongside, against R (~93%).</div>
+
+  <h3>7.2 Main remedy: per-condition tuning</h3>
+  <p>Maybe NegGrad+ is not fragile and the default (learning rate 0.01, forget weight 0.01) is just bad for concentrated sets. 20 settings: lr ∈ {0.001, 0.003, 0.01, 0.03} × 1−α ∈ {0.001, 0.003, 0.01, 0.03, 0.05}, chosen per class on 3 tuning seeds (447–449) by a fixed rule:</p>
   <ol class="steps">
-    <li><b>Utility loss of one run, U</b> = accuracy of O on the retained data − accuracy of the unlearned model on the retained data. U = 0: nothing was damaged; U = 15: 15 points lost on what should have been kept. Both models are <b>recalibrated</b> on the retained data first, so U measures damage in the weights, not a corrupted BatchNorm memory.</li>
-    <li><b>Concentration penalty, per seed</b> = mean U over the 10 one-class requests − U of the spread request. Unlearning always costs a little; this isolates the <em>extra</em> cost of concentration. Made-up example: O at 99.0%, spread request 98.5% (U = 0.5), the ten one-class requests average 84.5% (U = 14.5): penalty = 14.5 − 0.5 = <b>14 points</b>.</li>
-    <li><b>Effect of a fix, I</b> = penalty of the original NegGrad+ − penalty with the fix, again per seed, then a t test over seeds. If the original loses 14 extra points and the fix 1, then I = 13: the fix removed 13 of the 14 points of damage.</li>
+    <li><b>stable</b>: no divergence or collapse on the 3 seeds;</li>
+    <li><b>feasible</b>: stable <em>and</em> strength E ≥ E<sub>R</sub>;</li>
+    <li>among feasible settings, the best recalibrated validation accuracy;</li>
+    <li>if none is feasible: among stable settings, the one that forgets the most.</li>
   </ol>
-  <div class="note warn"><b>The trap: a small penalty is not automatically good news.</b> The easiest way to damage nothing is to do nothing: a method that forgets nothing has U = 0. So every fix was also checked with the <b>forgetting strength</b> E (how much the probability of the true class dropped on the images to forget) and with the accuracy on those images. Reference point: the retrained model R still recognises about <b>93%</b> of the forgotten boots, because it learned what a boot is from the other boots. The target is 93%, not 0%.</div>
-  <p>Each dot below is one seed.</p>
-  <div class="panel">
-    <div class="controls"><span class="seg" role="group" aria-label="Study">
-      <button type="button" data-st="cf" aria-pressed="false">Frozen target</button>
-      <button type="button" data-st="rd" aria-pressed="true">BatchNorm fix (RD64)</button>
-      <button type="button" data-st="tuning" aria-pressed="false">Per-class tuning</button>
-    </span></div>
-    <svg class="fig" id="figPen" viewBox="0 0 640 260" role="img" aria-label="Per-seed concentration penalty for each arm of the selected study"></svg>
-    <p class="hint" id="penText"></p>
-  </div>
-
-  <h3>The three fixes, explained</h3>
-  <p>The instability has two suspects: the <b>unbounded objective</b> (NegGrad+ pushes −log p up with no ceiling) and <b>BatchNorm on a one-class batch</b> (the forget batch is normalised by its own statistics, the gradient flows through them, and the stored memory is polluted). Each fix targets a different suspect.</p>
+  <p>Evaluation on 12 other seeds (450–461, chosen by power simulation), so that the choice is not judged on the seeds that made it; t test on the penalty and TOST with a ±2-point margin.</p>
   <div class="scroll"><table class="data">
-    <thead><tr><th></th><th>RD64</th><th>Frozen target (CF)</th><th>Per-class tuning</th></tr></thead>
+    <thead><tr><th></th><th>Default NegGrad+</th><th>Tuned NegGrad+</th></tr></thead>
     <tbody>
-      <tr><td><b>Targets</b></td><td>BatchNorm</td><td>the unbounded objective</td><td>neither: “was it just badly tuned?”</td></tr>
-      <tr><td><b>What changes</b></td><td>The forget batch is normalised with the mean and variance of 64 images of the <em>mixed</em> retained batch of the same step, detached from the gradient, and it no longer updates the stored memory.</td><td>Instead of “push the true class down forever”, descend towards a fixed answer: O's own probabilities over the other classes (true class removed, then renormalised). Once reached, there is nothing left to push.</td><td>Nothing in the method: learning rate (4 values) × forget weight (5 values), chosen separately for each class by a fixed rule.</td></tr>
-      <tr><td><b>Why we tried it</b></td><td>In study 10, RD64 never diverged (0 / 680) where the forget batch's own statistics did (61 / 100 one-class sets).</td><td>Random labels, which also have a finite target, were far less affected by concentration (study 08). CF keeps the model's “culture” (a boot resembles a sneaker, not a bag) instead of a random wrong label.</td><td>A reviewer could say NegGrad+ is fine and the default 0.01 / 0.01 was just a bad setting for concentrated requests.</td></tr>
-      <tr><td><b>Seeds</b></td><td>14 (433–446)</td><td>12 (421–432)</td><td>3 to tune (447–449) + 12 to evaluate (450–461)</td></tr>
-      <tr><td><b>Penalty removed</b></td><td class="num">13.7 points, all 14 seeds</td><td class="num">16.2 points</td><td class="num">14.2 → 1.07 points</td></tr>
-      <tr><td><b>Blow-ups</b></td><td>84 / 140 → 0 / 140 divergences</td><td>70 / 120 → 0 collapses</td><td>71 / 120 → 2 / 120 divergences</td></tr>
-      <tr><td><b>The catch</b></td><td>Three things change at once, so we do not know which one works. It still recognises 96.7% of the forgotten images (fine-tuning 98.5%, R 93.1%).</td><td>It recognises about 97% of the forgotten images. Post hoc: it fits its target only in training mode, i.e. only inside one-class batches; with recalibrated statistics the change is gone.</td><td>Only 3 of 10 classes had a setting that is both stable and as strong as R. For the other 7, the rule fell back to the strongest stable setting, which forgets less than R.</td></tr>
+      <tr><td>Concentration penalty</td><td>14.2 pts [13.0, 15.5]</td><td>1.07 pts [0.88, 1.27]</td></tr>
+      <tr><td>TOST (±2 pts)</td><td>–</td><td>equivalent to 0</td></tr>
+      <tr><td>Divergences, concentrated</td><td>71 / 120</td><td>2 / 120</td></tr>
     </tbody>
   </table></div>
-  <div class="scroll"><table class="data">
-    <thead><tr><th>Accuracy on the images to forget (concentrated, recalibrated; study 12, frozen target from study 11)</th><th class="num">Value</th></tr></thead>
-    <tbody>
-      <tr><td>Original NegGrad+ (A): goes too far, it breaks</td><td class="num">80.2%</td></tr>
-      <tr><td>Retrained model R: the target</td><td class="num">93.1%</td></tr>
-      <tr><td>NegGrad+ with RD64</td><td class="num">96.7%</td></tr>
-      <tr><td>Frozen target</td><td class="num">≈ 97%</td></tr>
-      <tr><td>Fine-tuning (almost does nothing)</td><td class="num">98.5%</td></tr>
-    </tbody>
-  </table></div>
-  <p><b>In plain words:</b> all three fixes stop NegGrad+ from blowing up and protect the rest of the model, but they sit next to fine-tuning, not next to R. They are safe mostly because they act less. The tuning result also shows why TOST matters: its remaining penalty, 0.88–1.27, excludes 0 (a small penalty is still there) <em>and</em> lies inside ±2 (it is provably small).</p>
-
-  <h3>Inside the tuning study</h3>
-  <p>For each class, 20 settings (4 learning rates × 5 forget weights) were tried on 3 seeds. A setting counted as <b>stable</b> if no run diverged or collapsed, and as <b>feasible</b> if it also reached the forgetting strength of the retrained model. Pick a class.</p>
+  <p>The interval [0.88, 1.27] excludes 0 (a small penalty remains) and lies below 2 (it is small): both are true at once.</p>
   <div class="panel">
     <div class="controls"><label>class <select id="tcls"></select></label></div>
     <div class="two">
@@ -372,38 +478,37 @@
     </div>
     <p id="tText"></p>
   </div>
-  <div class="note"><b>Reading.</b> Tuning brought the penalty from about 14 points to about 1, but for 7 of 10 classes no stable setting reached the retrained model's strength: the tuned method mostly <em>acted less</em>. The BatchNorm fix behaved similarly: it protected the model but barely changed its predictions on the data to forget.</div>
-</section>
+  <div class="note"><b>Reading.</b> Only 3 classes of 10 (c4, c8, c9) have a setting both stable and as strong as R; the stratified set is stable under all 20 settings, concentrated sets under 1 to 16. On the evaluation seeds, R's strength is reached in only 20% of concentrated runs. <b>To stay stable on concentrated sets, NegGrad+ must push less than it would need to forget as much as R.</b></div>
 
-<section id="trap">
-  <h2>A measurement trap</h2>
-  <p>Many runs looked “collapsed” (test accuracy ≤ 20%). But that accuracy is measured with the statistics BatchNorm stored during unlearning, which the single-class batches had corrupted. Recompute those statistics on the remaining data, without touching any weight, and see what happens.</p>
+  <h3>7.3 The other two remedies</h3>
+  <ul class="list">
+    <li><b>Frozen target</b> (bounded objective): for each image to forget, descend towards O's output with the true class removed and renormalised. 12 seeds (421–432): penalty reduced by <b>16.2 points</b> [14.1, 18.4], 0 collapses vs 70/120. But it still recognises ~97% of the images to forget, and it reaches its target only in training mode, inside one-class batches: once recalibrated, the change is gone.</li>
+    <li><b>RD64</b> (BatchNorm): NegGrad+ kept, but the forget batch is normalised with the statistics of 64 images of the mixed keep batch, detached, without updating the buffers. 14 seeds (433–446): penalty reduced by <b>13.7 points</b> [12.6, 14.7] in all 14 seeds; divergences 84/140 → 0/140. Three things change at once, so which one works is unknown.</li>
+  </ul>
   <div class="panel">
-    <div class="controls"><span class="seg" role="group" aria-label="Evaluation">
-      <button type="button" data-ev="nat" aria-pressed="true">Stored (native) statistics</button>
-      <button type="button" data-ev="rec" aria-pressed="false">Recomputed statistics</button>
+    <div class="controls"><span class="seg" role="group" aria-label="Study">
+      <button type="button" data-st="cf" aria-pressed="false">Frozen target</button>
+      <button type="button" data-st="rd" aria-pressed="true">BatchNorm fix (RD64)</button>
+      <button type="button" data-st="tuning" aria-pressed="false">Per-class tuning</button>
     </span></div>
-    <svg class="fig" id="figTrap" viewBox="0 0 640 220" role="img" aria-label="Test accuracy of collapsed runs before and after recomputing BatchNorm statistics"></svg>
-    <p class="hint" id="trapText"></p>
+    <svg class="fig" id="figPen" viewBox="0 0 640 260" role="img" aria-label="Per-seed concentration penalty for each arm of the selected study"></svg>
+    <p class="hint" id="penText"></p>
   </div>
-  <p>A real loss remains (about 74% vs 93% for the original model), but much smaller than it first appeared. How an unlearned model is evaluated can change the conclusion.</p>
-  <h3>So which accuracy is which?</h3>
-  <p>The rule: what judges whether the <b>delivered model</b> is broken uses the native statistics; what judges <b>damage in the weights</b> uses recalibrated ones.</p>
   <div class="scroll"><table class="data">
-    <thead><tr><th>Measure</th><th>BatchNorm statistics</th><th>Why</th></tr></thead>
+    <thead><tr><th>Accuracy on the images to forget (concentrated, recalibrated)</th><th class="num">Value</th></tr></thead>
     <tbody>
-      <tr><td>Divergence (forget loss &gt; 10)</td><td>none: measured <em>during</em> unlearning, with each batch's own statistics</td><td>It is the loss the optimiser sees, not an evaluation.</td></tr>
-      <tr><td>Collapse (test accuracy ≤ 20%)</td><td><b>native</b></td><td>The model as it would be shipped. Broken memory is still broken.</td></tr>
-      <tr><td>Utility loss U and the penalty</td><td><b>recalibrated</b> (O and the unlearned model)</td><td>Damage in the weights, without memory contamination.</td></tr>
-      <tr><td>Accuracy on forgotten images, strength E</td><td><b>recalibrated</b></td><td>Compare behaviours with a clean memory.</td></tr>
-      <tr><td>Original study (v3)</td><td>native only</td><td>No recalibrated evaluation exists for it: a stated limit.</td></tr>
+      <tr><td>Plain NegGrad+ (A): goes too far, it breaks</td><td class="num">80.2%</td></tr>
+      <tr><td>R: the target</td><td class="num">93.1%</td></tr>
+      <tr><td>NegGrad+ with RD64</td><td class="num">96.7%</td></tr>
+      <tr><td>Frozen target</td><td class="num">≈ 97%</td></tr>
+      <tr><td>Fine-tuning (does almost nothing)</td><td class="num">98.5%</td></tr>
     </tbody>
   </table></div>
-  <p>Recalibration is generous to the methods: it repairs the memory for free. A small recalibrated penalty means “the weights are fine”, not “the model as delivered is fine”, which is why collapse stays measured with native statistics alongside it.</p>
+  <div class="note"><b>Reading.</b> The three remedies avoid the breakdown mostly because they forget less: they end up next to fine-tuning, not next to R. They are remedies <b>for the instability</b>, not <b>for forgetting</b>. Making NegGrad+ both stable and as effective as retraining on concentrated requests remains open.</div>
 </section>
 
 <section id="evidence">
-  <h2>Is it real, and is it BatchNorm?</h2>
+  <h2>Putting it together: is it real, and is it BatchNorm?</h2>
   <p>Two questions that the project always kept apart. <b>Is the effect real</b>, or chance? Statistically the answer is very clear. <b>Is BatchNorm the cause?</b> There the answer is more careful: every experiment points at it, but no study isolated a mechanism.</p>
   <h3>How a cause is shown in an experiment</h3>
   <p>A correlation is not enough. The method is the <b>intervention</b>: keep everything identical, change one thing, and see whether the effect disappears. If you change the bulb and the lamp lights up, the bulb was the problem; if you changed the bulb <em>and</em> the socket, you only know it was one of the two. The whole chain applies such interventions to BatchNorm on the same seeds, then checks statistically that the difference is not chance.</p>
@@ -444,8 +549,35 @@
   </div>
 </section>
 
+<!-- =============================== 8. LIMITS =============================== -->
+<section id="limits">
+  <h2>8 · Limits and future work</h2>
+  <div class="two">
+    <div>
+      <h3>Limits</h3>
+      <ul class="list">
+        <li>True erasure is never measured: one exploratory membership-inference attack, on Tiny ImageNet (NegGrad+ AUC 0.39: an inversion, not erasure).</li>
+        <li>BatchNorm is the main suspect, but no mechanism was isolated: most variants change several things at once.</li>
+        <li>Mostly a small CNN on Fashion-MNIST, 3 to 14 seeds. On Tiny ImageNet the effect goes the same way but is much weaker (θ = 0.029 decade).</li>
+        <li>The studies share a data split, so they are not independent replications.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Next</h3>
+      <ul class="list">
+        <li>Run the PCGrad study already frozen (never executed).</li>
+        <li>Replace BatchNorm with GroupNorm or LayerNorm across the whole chain.</li>
+        <li>Measure the forgetting of the remedies properly (membership inference, distance to R, several R per condition).</li>
+        <li>Predict risky deletion requests from batch statistics computed before unlearning.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note"><b>If you deploy unlearning</b>: look at the class composition of deletion requests, test methods on concentrated ones, report divergence, collapse, accuracy loss and forgetting strength separately, and do not assume tuning will save you.</div>
+</section>
+
+<!-- =============================== APPENDIX =============================== -->
 <section id="studies">
-  <h2>Every study, in order</h2>
+  <h2>Appendix · All 13 studies, in order</h2>
   <p>The project is a chain of 13 studies. Each one answered a question left open by the previous one. Open a study to see its question, its design, what came out and what it does <em>not</em> show. Filter by role or by status.</p>
   <div class="chips" role="group" aria-label="Filter studies by role">
     <button type="button" data-f="all" aria-pressed="true">All 13</button>
@@ -621,29 +753,8 @@
   </details>
 </section>
 
-<section id="defs">
-  <h2>Definitions used everywhere</h2>
-  <div class="scroll"><table class="data">
-    <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
-    <tbody>
-      <tr><td><b>A</b></td><td>Original implementation: retained and forgotten batches go through separate training-mode passes, so a concentrated forget batch is normalised by its own one-class statistics, with the gradient flowing through them and the stored statistics updated.</td></tr>
-      <tr><td><b>B</b></td><td>Retained and forgotten images concatenated into one batch.</td></tr>
-      <tr><td><b>C</b></td><td>All BatchNorm layers frozen in evaluation mode with the original model's statistics.</td></tr>
-      <tr><td><b>E1</b></td><td>Forget batch normalised with running statistics updated by retained batches only.</td></tr>
-      <tr><td><b>E1D</b></td><td>Own statistics, like A, but detached (no gradient) and without updating the stored statistics.</td></tr>
-      <tr><td><b>RD64</b></td><td>Statistics of the first 64 rows of the concurrent retained batch, detached, without updating the stored statistics.</td></tr>
-      <tr><td>Divergence</td><td>Forget loss above 10 at some step, or a numerical failure (NegGrad+ only).</td></tr>
-      <tr><td>Collapse</td><td>Test accuracy ≤ 20%, or one class receiving ≥ 80% of the predictions, measured with the statistics left by unlearning.</td></tr>
-      <tr><td>U, penalty</td><td>U: accuracy lost on the retained data, with the original and unlearned models both recalibrated on that data. Penalty: mean U over the 10 concentrated sets minus U of the spread set, per seed.</td></tr>
-      <tr><td>Forgetting strength E</td><td>Mean drop, in decades, of the probability of the true class on the forgotten images, relative to the original model. A change of prediction, not proof of erasure.</td></tr>
-      <tr><td>Seed</td><td>One complete repetition with its own model; the unit of every statistical test.</td></tr>
-      <tr><td>Holm, TOST, power, calibration</td><td>Correction for several tests; equivalence test (the 90% interval must sit inside the margin); probability of detecting a real effect, used to choose the number of seeds; simulation checking that a test gives about 5% false positives.</td></tr>
-    </tbody>
-  </table></div>
-</section>
-
 <section id="method">
-  <h2>How it was done</h2>
+  <h2>Appendix · How it was done</h2>
   <p>It began with an unexpected failure, continued with exploratory diagnostics, and then moved to studies whose plan was fixed before any result was seen:</p>
   <div class="panel">
     <svg class="fig" id="figMethod" viewBox="0 0 640 120" role="img" aria-label="Workflow: protocol, simulations, freeze, pilot, study, frozen analysis"></svg>
@@ -661,7 +772,7 @@
 </section>
 
 <section id="checked">
-  <h2>How the results were checked</h2>
+  <h2>Appendix · How the results were checked</h2>
   <p>Before writing anything up, I audited the four most recent studies end to end:</p>
   <ul class="list">
     <li><b>Code</b>: the code executed on the GPU had the same fingerprint as the frozen, committed notebook, in all four studies; no blocking check failed.</li>
@@ -672,29 +783,7 @@
   </ul>
 </section>
 
-<section id="lessons">
-  <h2>Lessons and limits</h2>
-  <div class="two">
-    <div>
-      <h3>If you deploy unlearning</h3>
-      <ul class="list">
-        <li>Look at the class composition of deletion requests.</li>
-        <li>Test the method on concentrated requests: spread ones never showed the failure.</li>
-        <li>Report divergence, collapse, accuracy loss and forgetting strength separately.</li>
-        <li>Do not assume that tuning will save you.</li>
-      </ul>
-    </div>
-    <div>
-      <h3>What this does not show</h3>
-      <ul class="list">
-        <li>No study measured true erasure or privacy.</li>
-        <li>BatchNorm is a suspect, not a proven mechanism.</li>
-        <li>Mostly one small CNN on Fashion-MNIST, with smaller checks on CIFAR-10 and Tiny ImageNet.</li>
-      </ul>
-    </div>
-  </div>
-  <p><a class="back" href="../files/machine-unlearning-overview.pdf" target="_blank" rel="noopener">Plain-language overview (PDF)</a> · code private, technical working paper on request.</p>
-</section>
+<p><a class="back" href="../files/machine-unlearning-overview.pdf" target="_blank" rel="noopener">Plain-language overview (PDF)</a> · code private, technical report on request.</p>
 <div class="dash"></div>
 </main>
 <footer><div class="wrap">All numbers come from the project's frozen analyses. Figures are drawn in the browser from those values.</div></footer>

@@ -105,6 +105,8 @@ table.data th { border-bottom: 3px solid var(--c4); }
 table.data td.num, table.data th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .scroll { overflow-x: auto; }
 
+pre.code { background: var(--c0); border: 3px solid var(--c4); padding: 10px 14px; margin: 12px 0 16px; font: 13.5px/1.5 "IBM Plex Mono", monospace; overflow-x: auto; white-space: pre; }
+
 ul.list { padding-left: 20px; margin: 0 0 14px; }
 ul.list li { margin: 4px 0; }
 ol.steps { padding-left: 22px; }
