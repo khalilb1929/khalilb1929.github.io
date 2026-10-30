@@ -751,37 +751,9 @@ p-value by parametric bootstrap: 2,000 simulated experiments with γ = 0,
   </details>
 </section>
 
-<section id="method">
-  <h2>Appendix · How it was done</h2>
-  <p>It began with an unexpected failure, continued with exploratory diagnostics, and then moved to studies whose plan was fixed before any result was seen:</p>
-  <div class="panel">
-    <svg class="fig" id="figMethod" viewBox="0 0 640 120" role="img" aria-label="Workflow: protocol, simulations, freeze, pilot, study, frozen analysis"></svg>
-  </div>
-  <ul class="list">
-    <li><b>Protocol</b>: the question, one main test and the wording of each possible conclusion.</li>
-    <li><b>Simulations</b>: how many seeds are needed (power), and whether the test raises false alarms (calibration).</li>
-    <li><b>Freeze</b>: the plan and the code are committed with a fingerprint before the run.</li>
-    <li><b>Pilot</b>: only to measure computing time; its results stay sealed.</li>
-    <li><b>Study and frozen analysis</b>: run on a cloud GPU (A100), analysed exactly as written.</li>
-  </ul>
-  <p>Each seed trains a new model, and the statistics treat one seed as one data point. The studies share some data, so they are not fully independent replications, and the plans live in a private repository rather than a public registry.</p>
-  <h3>When something went wrong</h3>
-  <p>Three times (studies 08, 10 and 11) a pilot stopped on a blocking unit test before any unlearning run; in the last two the tolerance was too strict for the A100's reduced-precision (TF32) arithmetic. Each time the fix was written as a dated amendment, committed, and the pilot re-run; no result had been looked at. The notebooks also stop on their own if, for example, the code fingerprint differs from the frozen one, or if a replayed run is not bit-for-bit identical.</p>
-</section>
 
-<section id="checked">
-  <h2>Appendix · How the results were checked</h2>
-  <p>Before writing anything up, I audited the four most recent studies end to end:</p>
-  <ul class="list">
-    <li><b>Code</b>: the code executed on the GPU had the same fingerprint as the frozen, committed notebook, in all four studies; no blocking check failed.</li>
-    <li><b>Analyses</b>: six frozen analyses were re-run from the raw per-run tables and reproduced their committed outputs exactly.</li>
-    <li><b>Numbers</b>: 52 key numbers quoted in the write-up were recomputed independently from the raw tables, without the analysis scripts; all matched up to rounding, and the tuning rule recomputed from scratch chose the same settings.</li>
-    <li><b>One correction</b>: the audit showed that most “collapses” disappeared after recomputing BatchNorm statistics (section 5), so the wording of the write-up was corrected.</li>
-    <li><b>Not checkable</b>: the raw Tiny ImageNet tables are not in the repository, and the original study has no recalibrated evaluation.</li>
-  </ul>
-</section>
 
-<p><a class="back" href="../files/machine-unlearning-overview.pdf" target="_blank" rel="noopener">Plain-language overview (PDF)</a> · code private, technical report on request.</p>
+<p><a class="back" href="../files/machine-unlearning-report-en.pdf" target="_blank" rel="noopener">Full report (PDF)</a> · <a class="back" href="../files/machine-unlearning-rapport-fr.pdf" target="_blank" rel="noopener">Rapport en français (PDF)</a> · code private.</p>
 <div class="dash"></div>
 </main>
 <footer><div class="wrap">All numbers come from the project's frozen analyses. Figures are drawn in the browser from those values.</div></footer>
@@ -1168,15 +1140,6 @@ openFromHash();
   wire('[aria-label="Filter studies by status"]', "g", v => stat = v);
 })();
 
-/* ---------- 8. Workflow ---------- */
-(function () {
-  const s = document.getElementById("figMethod"), steps = ["Protocol", "Simulations", "Freeze", "Pilot", "Study", "Analysis"];
-  steps.forEach((t, i) => { const x = 8 + i * 106;
-    el("rect", { x, y: 34, width: 88, height: 44, fill: i === 5 ? C.c4 : C.c0, stroke: C.c4, "stroke-width": 3 }, s);
-    el("text", { x: x + 44, y: 61, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: i === 5 ? C.c0 : C.c4 }, s, t);
-    if (i < 5) el("path", { d: `M${x + 90},56 L${x + 104},56 M${x + 98},50 L${x + 104},56 L${x + 98},62`, stroke: C.c4, "stroke-width": 3, fill: "none" }, s); });
-  el("text", { x: 320, y: 104, "text-anchor": "middle", "font-size": 11, fill: C.c3 }, s, "everything left of the study is committed before any result is seen");
-})();
 </script>
 </body>
 </html>
