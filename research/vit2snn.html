@@ -22,12 +22,16 @@
   <ul class="toc">
     <li><a href="#spikes">1 · Spiking neurons</a></li>
     <li><a href="#energy">2 · Why spikes could save energy</a></li>
-    <li><a href="#arch">3 · The student network</a></li>
-    <li><a href="#training">4 · Two-phase training</a></li>
-    <li><a href="#align">5 · How well did it copy?</a></li>
-    <li><a href="#results">6 · Results</a></li>
-    <li><a href="#journey">7 · The whole project, step by step</a></li>
-    <li><a href="#limits">8 · Limits</a></li>
+    <li><a href="#convert">3 · From a ViT to a spiking ViT</a></li>
+    <li><a href="#encoder">4 · The spike encoder</a></li>
+    <li><a href="#ssa">5 · Spiking attention</a></li>
+    <li><a href="#residual">6 · Residuals, norms and readout</a></li>
+    <li><a href="#arch">7 · The student network</a></li>
+    <li><a href="#training">8 · Two-phase training</a></li>
+    <li><a href="#align">9 · How well did it copy?</a></li>
+    <li><a href="#results">10 · Results</a></li>
+    <li><a href="#journey">11 · The whole project, step by step</a></li>
+    <li><a href="#limits">12 · Limits</a></li>
   </ul>
 </div></header>
 
@@ -47,6 +51,15 @@
     <p class="hint" id="lifText"></p>
   </div>
   <p>Spikes are not differentiable, so training uses a <b>surrogate gradient</b>: the forward pass uses the step function, the backward pass a smooth arctangent approximation of it.</p>
+  <h3>The neuron settings, explained</h3>
+  <ul class="list">
+    <li><b>Leak, τ = 2 (fixed)</b>: <code>H = 0.5·V + 0.5·X</code>: at each step the membrane keeps half of its value and takes half of the input.</li>
+    <li><b>Threshold 1 (fixed)</b>, except the attention output neuron (0.5). BatchNorm layers, not the threshold, adapt the scale of each neuron's input.</li>
+    <li><b>Soft reset</b>: after a spike, the threshold is <em>subtracted</em> (1.3 → 0.3) instead of resetting to 0 (1.3 → 0). The excess is kept, so the spike count tracks the input strength better.</li>
+    <li><b>Detached reset</b> (training only): in <code>V<sub>t</sub> = H<sub>t</sub> − 1·S<sub>t</sub></code>, the spike used for the reset is treated as a constant in backpropagation. The membrane still carries gradient through time and the spike output still gets its surrogate gradient; only the noisy “I fired, so my potential drops” path is cut, which makes training more stable.</li>
+    <li><b>Arctangent surrogate</b> (α = 2): strong gradient for a membrane close to the threshold, almost none far from it.</li>
+    <li><b>Weights are shared across the 4 steps.</b> One forward pass runs the 4 steps with fixed weights; the loss is computed after step 4, gradients flow back through the 4 steps (each weight's gradient sums the contributions of every step), and there is one update per batch.</li>
+  </ul>
 </section>
 
 <section id="energy">
@@ -62,6 +75,116 @@
     <p class="hint" id="eText"></p>
   </div>
   <div class="note warn"><b>Not a measurement.</b> This is arithmetic on operation counts. It ignores memory traffic, data movement and neuron state updates (counting them lowers the ratio to about 9.5–10.4×), and nothing was measured on the laptop or on neuromorphic hardware.</div>
+  <p><b>What a weight does in a spiking network.</b> Weights are ordinary real numbers (any sign, any size); only the activations are spikes. When neuron i spikes, the weight w<sub>ij</sub> is simply added to the membrane of neuron j: positive weights push it towards the threshold, negative ones away. With a threshold of 1, w = 0.3 brings the neuron 30% of the way. A value of 2 arriving at a weighted layer would need two additions (or a multiplication), which is why every weighted layer here only ever receives 0s and 1s.</p>
+  <p><b>Training is not spiking.</b> On the GPU, spikes are float tensors of 0.0 and 1.0 and every training step (BatchNorm statistics, gradients, AdamW) uses ordinary multiplications. The “additions only” property, and the energy estimate, concern inference on suitable hardware.</p>
+</section>
+
+<section id="convert">
+  <h2>From a ViT to a spiking ViT</h2>
+  <p>The architecture and the weight shapes stay the same. Three things change everywhere: a time dimension T is added, activations become spikes, and every operation that is not an addition or a threshold comparison must be replaced.</p>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Element of the ANN</th><th>In the spiking network</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Input image</td><td>A <b>spike encoder</b> (section 4)</td><td>Later layers must receive only 0s and 1s.</td></tr>
+      <tr><td>ReLU, GELU</td><td>A LIF neuron</td><td>The firing rate of an integrate-and-fire neuron behaves like a clipped ReLU.</td></tr>
+      <tr><td>Linear layer, convolution</td><td>Same weights, applied to spike maps at every step</td><td>Binary inputs: accumulations instead of multiply–accumulates.</td></tr>
+      <tr><td>Bias</td><td>A constant current added at every step</td><td>It adds to the membrane like a fixed input.</td></tr>
+      <tr><td>BatchNorm</td><td><b>Kept</b>; statistics over T×B×N values; folded into the weights at inference</td><td>At inference it is a fixed scale and shift (section 6).</td></tr>
+      <tr><td>LayerNorm (inside blocks)</td><td><b>Removed</b>, replaced by the BatchNorm after each linear layer</td><td>It needs a mean, a variance and a division per token at inference time.</td></tr>
+      <tr><td>Max-pooling (CNNs)</td><td>Average pooling, or “first neuron to fire wins”</td><td>A max of firing rates is not easy to compute online. (ViT-Tiny has none.)</td></tr>
+      <tr><td>Attention softmax</td><td><b>Removed</b> (section 5)</td><td>Exponentials and divisions.</td></tr>
+      <tr><td>Residual connection</td><td>Redesigned (section 6)</td><td>Adding two spikes gives 2, which is not a spike.</td></tr>
+      <tr><td>Negative values</td><td>ON/OFF neuron pairs</td><td>A spike cannot be negative.</td></tr>
+      <tr><td>Last layer</td><td>No spikes: real logits, averaged over the T steps</td><td>A class is chosen from real scores.</td></tr>
+    </tbody>
+  </table></div>
+  <h3>The role of T</h3>
+  <p>A single spike cannot say “0.7”, so the network runs for T steps and a value is carried by <em>how many</em> spikes a neuron emits. With T = 4 a neuron can express 5 levels (0 to 4 spikes). Every tensor gains a dimension: [T, B, N, D] with N = 197 tokens and D = 192 channels.</p>
+  <ul class="list">
+    <li>A larger T gives finer values but more operations (proportional to T) and more latency.</li>
+    <li>At the first step membranes start empty: 3.1% of neurons fire at t = 1, about 8% afterwards.</li>
+    <li>The model is tuned to its training T: at inference T = 1 gives 9.04%, T = 2 32.15%, T = 4 62.78%, and T = 8 only 58.75% (the BatchNorm statistics were learned with T = 4).</li>
+  </ul>
+</section>
+
+<section id="encoder">
+  <h2>The spike encoder</h2>
+<pre class="code">image                      [B, 3, 224, 224]
+ │ patch embedding (16×16 conv) + CLS + position   ← copied from the teacher, frozen, NOT spiking
+ ▼  z                       [B, 197, 192]   real values
+ │ repeated over T = 4 steps (direct coding: the same current at every step)
+ │ BatchNorm                                       ← trained: places values where the neurons react
+ │ ON/OFF: concatenate [u, −u]                      ← 192 channels become 384 neurons
+ ▼ input LIF neurons → spikes 0/1   [4, B, 197, 384]
+ │ Linear 384→192 (no bias) + BatchNorm             ← initialised to [I, −I]
+ ▼  h₀                      [4, B, 197, 192]   real, enters block 1</pre>
+  <ul class="list">
+    <li><b>Why keep the patch embedding classical</b>: it reads real pixels, and copying it keeps exactly the teacher's tokens z. It is computed once per image and accounts for most of the student's 29.7 M MACs.</li>
+    <li><b>Why a BatchNorm before the neurons</b>: with τ = 2 and threshold 1, a neuron fed a constant current u over 4 steps fires 0 times for u ≤ 1, once for 1.1, twice for 1.5 and 4 times for u ≥ 2. The useful window is narrow, and the BatchNorm moves values into it.</li>
+    <li><b>Why ON/OFF</b>: a negative z would never make a neuron fire, so −1.5 and 0 would look the same. One neuron receives z (fires for positive values), another −z (fires for negative values). Both emit ordinary 0/1 spikes.</li>
+  </ul>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>z</th><th>ON neuron (gets z)</th><th>OFF neuron (gets −z)</th><th>h₀ ≈ rate(ON) − rate(OFF)</th></tr></thead>
+    <tbody>
+      <tr><td>+1.5</td><td>2 spikes / 4</td><td>0</td><td>+0.5</td></tr>
+      <tr><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+      <tr><td>−1.5</td><td>0</td><td>2 spikes / 4</td><td>−0.5</td></tr>
+    </tbody>
+  </table></div>
+  <p>With the [I, −I] initialisation, h₀ starts with the sign of z and grows with |z|: roughly z, at a coarser resolution. Phase 1 then trains this BatchNorm and projection so that the time-averaged h₀ matches the teacher's tokens (relative error 0.22, the best-copied stage); about 10% of the input neurons fire.</p>
+</section>
+
+<section id="ssa">
+  <h2>Spiking attention (SSA)</h2>
+  <p>Standard attention computes <code>softmax(QKᵀ/√d)·V</code> with real Q, K, V. The softmax needs exponentials and divisions at inference time, and it forces the N×N attention map to be built. The student uses Spikformer's spiking self-attention (SSA), which changes three things:</p>
+  <div class="scroll"><table class="data">
+    <thead><tr><th></th><th>ViT</th><th>Spiking ViT (SSA)</th></tr></thead>
+    <tbody>
+      <tr><td>Input</td><td>LayerNorm(h), real</td><td>LIF(h), spikes</td></tr>
+      <tr><td>Q, K, V</td><td>hW, real</td><td>LIF(BN(spikes·W)), <b>binary</b></td></tr>
+      <tr><td>Token mixing</td><td>softmax(QKᵀ/√d)·V</td><td>Q(KᵀV) × 0.125, <b>no softmax</b></td></tr>
+      <tr><td>Output</td><td>real</td><td>LIF (threshold 0.5), then Linear + BN</td></tr>
+    </tbody>
+  </table></div>
+<pre class="code">spk = LIF(h)                                         // input spikes of the sub-layer
+Q = LIF(BN(spk·W_Q)); K = LIF(BN(spk·W_K)); V = LIF(BN(spk·W_V))   // binary
+KV  = Kᵀ · V                                         // 64×64 per head, integer counts
+X   = (Q · KV) × 0.125                               // = QKᵀV × 0.125, no N×N map
+out = BN(LIF_0.5(X) · W_proj)                        // output projection, back to the stream h</pre>
+  <ul class="list">
+    <li><b>Why the softmax can go</b>: with binary Q and K, Q<sub>i</sub>·K<sub>j</sub> counts the channels active in both tokens: a non-negative integer. A fixed scale replaces the normalisation, and the output neuron turns the result back into spikes.</li>
+    <li><b>Why the order matters</b>: multiplying an (a×b) by a (b×c) matrix costs a·b·c. (QKᵀ)V goes through an N×N map and costs 2N²d; Q(KᵀV) goes through a d×d map and costs 2Nd². With N = 197 and d = 64 that is about 2.5 M versus 0.8 M operations per step (≈3×), and the gap grows with the number of tokens. The reordering is only possible because no softmax sits between the two products.</li>
+    <li><b>Where 0.125 comes from</b>: 0.125 = 1/√64, the same 1/√d as in standard attention. At inference it costs nothing: “0.125·X ≥ 0.5” is the same as “X ≥ 4”, so it can be moved into the threshold.</li>
+    <li><b>Three heads</b>: one W<sub>Q</sub> (192×192) produces the queries of all heads; Q, K and V are split into 3 chunks of 64 channels, each head computes its own result, and the three results are concatenated back into X (192 channels per token).</li>
+    <li><b>W<sub>proj</sub></b>: the attention's output projection (192×192), as in the ViT. It mixes the three heads, which never see each other's channels, and feeds the result back to the residual stream; it receives spikes, so it only adds.</li>
+    <li><b>What is lost</b>: without softmax the attention weights no longer sum to 1; a token sums rather than averages the others. In block 1 the attention output neuron fires up to 44% of the time (72% at the last step), a sign that the fixed scale and threshold are poorly matched there. A spike-driven variant (a binary channel mask on V) is implemented but was never evaluated.</li>
+  </ul>
+</section>
+
+<section id="residual">
+  <h2>Residuals, normalisation and readout</h2>
+  <h3>Membrane-shortcut residuals</h3>
+<pre class="code">h ──┬─────────────────────────────(+)──► h' ──┬──────────────────────(+)──► h'' ──► next block
+    │                              ▲          │                       ▲
+    └─► LIF ─► spikes ─► Attention ┘          └─► LIF ─► spikes ─► MLP ┘</pre>
+  <p>The main stream h stays <b>real-valued</b> between blocks (it plays the role of a membrane potential). Each sub-layer reads a copy of h through its own LIF, so the weighted layers only see spikes, and its real output is added back to h. No spike is ever added to another spike, and no LIF is placed on the stream itself: h' continues unchanged while the next LIF reads it as an input current.</p>
+  <div class="scroll"><table class="data">
+    <thead><tr><th>Option</th><th>What flows</th><th>Trade-off</th></tr></thead>
+    <tbody>
+      <tr><td>LIF after the addition</td><td>spikes only</td><td>pure spikes, but 1 + 1 becomes 1 again and a block cannot pass its input through unchanged: hard to train deep</td></tr>
+      <tr><td>Add spikes, keep the sum</td><td>integers 0, 1, 2, …</td><td>keeps information, but messages are no longer binary and grow with depth</td></tr>
+      <tr><td><b>Membrane shortcut (used here)</b></td><td>real stream, spikes into weighted layers</td><td>trains well and matches the teacher's hidden states; the stream is not event-driven, which costs some purity on neuromorphic hardware</td></tr>
+    </tbody>
+  </table></div>
+  <p>Because h has the same nature and shape as the teacher's hidden state (197 tokens × 192 channels, after averaging the 4 steps), the two can be compared block by block. A <b>channel</b> is one of the 192 components of a token's vector: one column of that 197×192 table. Through the network, each block updates the values of the table; its shape never changes.</p>
+  <h3>BatchNorm and LayerNorm</h3>
+  <ul class="list">
+    <li><b>BatchNorm is unchanged</b> in its maths, but placed after <em>every</em> linear layer (before the next LIF), with statistics over T×B×N values. Its job is to scale the input current relative to the threshold. At inference its statistics are frozen, so it folds into the weights: <code>W' = (γ/σ)·W</code>, <code>b' = β − γμ/σ</code>, where b' becomes a constant current. Example: W = [0.5, −0.2, 0.8], γ = 2, β = 0.1, μ = 0.3, σ = 0.5 and spikes [1, 0, 1] give 4.1 either way (Linear then BN, or folded W' = [2, −0.8, 3.2] with b' = −1.1).</li>
+    <li><b>LayerNorm inside the blocks is removed</b>: it would need per-token statistics recomputed at inference. Its role is taken by the BatchNorms. Side effect (an interpretation): the LIF at the entrance of each sub-layer reads h raw, so a huge channel such as the teacher's channel 41 fires at every step.</li>
+    <li><b>The final LayerNorm is kept</b>, copied from the teacher, on the CLS token only, before the head. It runs as a classical operation on the real stream; keeping the readout classical is common in spiking networks.</li>
+  </ul>
+  <h3>Reading out a class</h3>
+  <p>The head is the teacher's linear layer (192 → 1000 ImageNet logits), applied to the CLS token at every step; the 1000 logits are averaged over the 4 steps. They are real numbers, not probabilities; the predicted class is the largest logit (a softmax is only needed for the loss). Imagenette's 10 classes are mapped to their ImageNet indices, so no new head is created. Accuracy is reported either over the 1000 logits or restricted to the 10 Imagenette logits (section 11, step 05).</p>
 </section>
 
 <section id="arch">
@@ -76,6 +199,23 @@
 <section id="training">
   <h2>Two-phase training</h2>
   <p><b>Phase 1, stage-wise distillation.</b> The encoder (stage 0) and then each of the 12 blocks are trained one at a time, everything else frozen, so that the time-averaged output of the student block matches the teacher's hidden state (mean squared error). <b>Phase 2, fine-tuning.</b> The whole student is trained on the labels, with a cross-entropy loss plus a distillation term that matches the teacher's softened predictions.</p>
+  <h3>Where the starting weights come from</h3>
+  <p>The student has exactly the teacher's sizes (192 channels, 3 heads, MLP of 768, 12 blocks), so most weights are copied:</p>
+  <ul class="list">
+    <li><b>Copied</b>: patch embedding, CLS and position (then frozen); W<sub>Q</sub>, W<sub>K</sub>, W<sub>V</sub> (the teacher stores them in one 576×192 matrix, cut into three 192×192 pieces); W<sub>proj</sub>; the MLP's two layers; the final LayerNorm; the classification head. The student's linear layers have no bias, so the teacher's biases go into the β of the BatchNorm that follows.</li>
+    <li><b>Not copied</b>: every BatchNorm starts at γ = 1 (stored mean 0, variance 1); the encoder projection starts at [I, −I]; LIF neurons have nothing to initialise (τ and the threshold are fixed).</li>
+    <li><b>Why phase 1 still has work to do</b>: the copied weights now receive spikes instead of LayerNorm-normalised real values, with no softmax and LIF instead of GELU. The same weights compute something different, the scales are wrong, and the errors pile up from block to block. The copy gives good <em>directions</em>; training fixes the scales.</li>
+  </ul>
+  <h3>What exactly is aligned</h3>
+  <ul class="list">
+    <li>Only <b>activations</b> are aligned, never weights: after the copy, weights are free to drift. Phase 1 matches the hidden state at the <b>output of each block</b> (the residual stream h after both additions, averaged over the 4 steps) to the teacher's output of the same block. Internal activations (spikes, Q, K, V, the MLP's hidden layer) are not compared.</li>
+    <li>Shapes match: the teacher gives [B, 197, 192], the student [4, B, 197, 192], averaged over time into [B, 197, 192]. No projection is needed (the code supports one for a smaller student; here it has 0 parameters).</li>
+    <li>The input of each stage comes from the student's already-trained stages, run without gradients, so each block learns from what it will actually receive.</li>
+  </ul>
+  <h3>Why stage by stage rather than all at once</h3>
+  <p>Hidden states could also be distilled jointly, training all blocks with a sum of per-block MSE losses. Backpropagating through 4 time steps means storing the activations of every trained block for every step: about 3.43 GB for a batch of 16 (estimated), too much for the laptop. Stage by stage, the frozen prefix runs without gradients and only one block keeps its activations: about 0.28 GB. The cost is time (each stage re-runs the prefix, about 2 h in total) and no later correction of a badly copied block, except during phase 2.</p>
+  <h3>Phase 2 settings</h3>
+  <p><code>L = 0.3·CE (label smoothing 0.1) + 0.7·τ²·KL(teacher ‖ student)</code> with τ = 4, on the 4-step-averaged logits. AdamW, learning rate 10⁻⁴, weight decay 0.05, a 5% linear warm-up followed by a cosine decay, gradient clipping at 1, batches of 16 with gradient accumulation over 2 (one update every 32 images). The patch embedding stays frozen.</p>
   <div class="panel">
     <h3>Walk through phase 1</h3>
     <div class="controls">
@@ -99,6 +239,15 @@
     <svg class="fig" id="figAlign" viewBox="0 0 640 230" role="img" aria-label="Alignment of each stage with the teacher after phase 1"></svg>
     <p class="hint" id="alignText"></p>
   </div>
+  <h3>The relative error, precisely</h3>
+  <p><code>ρ<sub>ℓ</sub> = Σ (student − teacher)² / Σ (channel mean − teacher)²</code>, summed over the 262 images, the 197 tokens and the 192 channels of block ℓ. The denominator is the error of a “lazy predictor” that always answers each channel's average: it equals the teacher's variance, channel by channel (a property of the activations, not of the weights).</p>
+  <p>Example with one channel and four values: teacher 2, 4, 6, 8 (mean 5); student 3, 4, 5, 9. Student error 1 + 0 + 1 + 1 = 3; lazy error 9 + 1 + 1 + 9 = 20; ρ = 0.15. A student answering 8, 2, 9, 1 would have error 98 and ρ = 4.9: moving, but in the wrong direction. So <b>ρ = 0</b> is a perfect copy, <b>ρ = 1</b> is no better than a constant, <b>ρ &gt; 1</b> is worse than a constant.</p>
+  <p>This is why blocks 3 to 7, with small absolute errors (0.3–0.5), are in fact the worst copied (ρ 1.11–1.19), while blocks 8 to 12, with an absolute error near 20, are better (ρ 0.91 → 0.71).</p>
+  <h3>Channel 41 and the “energy” of a hidden state</h3>
+  <p>The energy of a token's state is the sum of the squares of its 192 values. With three channels (1, 2, 30), the squares are 1, 4 and 900: the third channel holds 99% of the energy. In the teacher, channel 41 jumps from a maximum of 12 at block 7 to 581 at block 8 and holds 90–94% of the energy. Since the MSE adds <em>squared</em> errors, a 10% miss on that channel (58² ≈ 3,400) dwarfs a 0.5 miss on any other (0.25): channel 41 alone makes 90–96% of the student's error from block 8 on. The jump of the loss is a scale effect, not a collapse of the alignment.</p>
+  <p>BatchNorm does not hide this: it scales the inputs of the neurons inside each branch, but the residual stream itself is never normalised (in the teacher either), and the loss compares the raw streams.</p>
+  <h3>After phase 2</h3>
+  <p>Once the whole network is fine-tuned, ρ goes <b>up</b> (to about 1.95 for the full run, 10–14 in the middle blocks without phase 1) while accuracy goes from chance to 63.7%. Phase 2 only optimises the output; many internal representations give the same answer, the student specialises on 10 classes while the teacher's states also serve 1000, and spikes impose their own representation. The plausible reading, still untested, is that phase 1 works as a <b>good starting region</b> (sensible BatchNorm scales and firing regimes from which phase 2 converges better) rather than as a lasting copy. The script that would test it, by comparing the two starting points, exists but has not been run.</p>
 </section>
 
 <section id="results">
@@ -187,7 +336,7 @@
 
   <details class="study">
     <summary><span class="n">06</span><span class="t">Post hoc diagnostics of phase 1</span><span class="badge">262 validation images</span><span class="s">Relative error and the channel-41 outlier</span></summary>
-    <div class="study-body"><p>The phase-1 checkpoint was re-evaluated on a fixed subset of 262 validation images (every 15th image), recording teacher statistics. Absolute MSE is not comparable across stages when the scale of the targets changes, hence the relative error shown in section 5. From block 8 on, the teacher's channel 41 grows from a maximum of 12.0 at block 7 to 581.4 at block 8 (≈48×), carries over 90% of the hidden-state energy and 90–96% of the student's error. This is why the absolute loss jumps while the relative error does not. Whether the student cannot, or simply was not trained enough to, reproduce this channel was not tested; a per-layer normalised loss is the obvious next step.</p></div>
+    <div class="study-body"><p>The phase-1 checkpoint was re-evaluated on a fixed subset of 262 validation images (every 15th image), recording teacher statistics. Absolute MSE is not comparable across stages when the scale of the targets changes, hence the relative error shown in section 9. From block 8 on, the teacher's channel 41 grows from a maximum of 12.0 at block 7 to 581.4 at block 8 (≈48×), carries over 90% of the hidden-state energy and 90–96% of the student's error. This is why the absolute loss jumps while the relative error does not. Whether the student cannot, or simply was not trained enough to, reproduce this channel was not tested; a per-layer normalised loss is the obvious next step.</p></div>
   </details>
 
   <details class="study">
